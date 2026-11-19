@@ -1,0 +1,947 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#070b18">
+<title>RoboAshr</title>
+<style>
+  :root {
+    --brain: #ff8fb1; --brainLine: #d9577f; --led: #4df0ff; --ink: #eaf2ff;
+  }
+  .fuzzy { --led: #ffd23f; }
+  .broken { --led: #ff4d6d; --brain: #8c8f99; --brainLine: #5d606b; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background-color: #070b18;
+    background-image: radial-gradient(ellipse at 50% 30%, #1d4a9e, #0a1430 45%, #050816 75%);
+    color: var(--ink);
+    font-family: "Trebuchet MS", "Arial Rounded MT Bold", system-ui, sans-serif;
+    touch-action: manipulation; user-select: none; -webkit-user-select: none;
+  }
+  #app {
+    position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  }
+  #meter { display: flex; align-items: center; gap: 10px; width: min(560px, 92vw); }
+  #meter .ico { font-size: 32px; line-height: 1; }
+  #meter .track { flex: 1; height: 24px; border-radius: 14px; background: #0b1224; border: 3px solid #33405f; overflow: hidden; }
+  #fill { height: 100%; width: 100%; border-radius: 10px; background: #5be37a; }
+  .fuzzy #meter .track { animation: pulse .6s ease-in-out infinite; }
+  #robot { flex: 1; min-height: 0; width: 100%; max-width: 760px; }
+  #bubble {
+    font-size: clamp(20px, 3.6vw, 34px); font-weight: 700; text-align: center;
+    padding: 8px 24px; border-radius: 999px; background: rgba(255,255,255,.08); max-width: 94vw;
+  }
+  .broken #bubble { background: #ff4d6d; color: #fff; animation: pulse 1s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .6; } }
+
+  /* robot svg animation */
+  #robotAll { transform-origin: 200px 520px; }
+  .broken #robotAll { animation: wobble 1.4s ease-in-out infinite; }
+  [data-state="talking"] #robotAll { animation: bob .18s ease-in-out infinite alternate; }
+  .broken[data-state="talking"] #robotAll { animation: wobble .5s ease-in-out infinite; }
+  @keyframes wobble { 0%,100% { transform: rotate(-3.5deg); } 50% { transform: rotate(3.5deg); } }
+  @keyframes bob { to { transform: translateY(-5px); } }
+  #headFx, #tapHint { display: none; }
+  .broken #headFx { display: inline; }
+  .broken #tapHint { display: inline; animation: nudge .8s ease-in-out infinite; }
+  @keyframes nudge { 50% { transform: translateX(14px); } }
+  .zz { animation: flick .3s steps(2, end) infinite; }
+  .zz:nth-child(2) { animation-duration: .23s; }
+  .zz:nth-child(3) { animation-duration: .37s; }
+  @keyframes flick { 50% { opacity: 0; } }
+  .smoke { animation: rise 2.2s linear infinite; transform-box: fill-box; transform-origin: center; opacity: 0; }
+  .smoke:nth-of-type(2) { animation-delay: .7s; }
+  .smoke:nth-of-type(3) { animation-delay: 1.4s; }
+  @keyframes rise { 0% { transform: translate(0,0) scale(.5); opacity: .7; } 100% { transform: translate(12px,-70px) scale(2); opacity: 0; } }
+  .fuzzy #domeBrain, .broken #domeBrain { animation: flicker .5s steps(2, end) infinite; }
+  @keyframes flicker { 50% { opacity: .5; } }
+  .tooth { fill: #f6f2e8; stroke: #cfc6b4; stroke-width: 1.5; }
+  .fan { animation: spin .5s linear infinite; transform-origin: 0 0; }
+  .broken .fan { animation-duration: 4s; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* overlays */
+  .overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 16px; }
+  .hidden { display: none !important; }
+  #start { z-index: 10; background-color: #070b18; background-image: radial-gradient(ellipse at 50% 40%, #213a66, #070b18 70%); text-align: center; }
+  #start h1 { font-size: clamp(44px, 9vw, 96px); margin: 0; letter-spacing: 2px; }
+  #start .big { font-size: clamp(80px, 16vw, 160px); line-height: 1; }
+  #start p { margin: 0; font-size: clamp(16px, 2.6vw, 22px); opacity: .75; max-width: 34em; }
+  #startBtn {
+    font: inherit; font-size: clamp(28px, 5vw, 46px); font-weight: 800; padding: 22px 52px; border-radius: 999px; border: 0;
+    background: linear-gradient(#5bf0ff, #2aa8d8); color: #06213a; cursor: pointer;
+    box-shadow: 0 8px 0 #1a6f94, 0 14px 30px rgba(0,0,0,.45);
+  }
+  #startBtn:active { transform: translateY(6px); box-shadow: 0 2px 0 #1a6f94; }
+  #repair { z-index: 5; background: rgba(4,7,18,.95); gap: 8px; }
+  #repairTitle { font-size: clamp(28px, 5vw, 48px); font-weight: 900; margin: 0; }
+  #todo { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+  .chip { font-size: clamp(20px, 3.5vw, 30px); font-weight: 800; padding: 6px 18px; border-radius: 999px; background: #1d2747; border: 3px solid #33405f; }
+  .chip.done { background: #1f6e3a; border-color: #5be37a; }
+  #repairSvg { flex: 1; min-height: 0; width: 100%; max-width: 680px; touch-action: none; }
+  #repairSvg g { transform-origin: 0 0; }
+  .loose { animation: jiggle .6s ease-in-out infinite; }
+  @keyframes jiggle { 0%,100% { transform: rotate(-7deg); } 50% { transform: rotate(7deg); } }
+  .boltTurn { transition: transform .25s cubic-bezier(.3,1.5,.5,1); }
+  .spark { animation: sparkle .3s ease-in-out infinite alternate; }
+  @keyframes sparkle { from { transform: scale(.8) rotate(0deg); } to { transform: scale(1.2) rotate(25deg); } }
+  .ring { animation: pulse .9s ease-in-out infinite; }
+  #fixedMsg {
+    position: absolute; top: 40%; font-size: clamp(52px, 11vw, 110px); font-weight: 900; color: #5be37a; text-align: center;
+    text-shadow: 0 6px 0 #0d3b1c, 0 0 40px rgba(91,227,122,.7); animation: pop .6s cubic-bezier(.2,1.6,.4,1);
+    pointer-events: none;
+  }
+  @keyframes pop { from { transform: scale(.2); opacity: 0; } }
+  .confetti { position: absolute; top: -24px; width: 14px; height: 20px; border-radius: 3px; animation: fall linear forwards; pointer-events: none; }
+  @keyframes fall { to { transform: translateY(115vh) rotate(800deg); } }
+  #debug { position: fixed; right: 8px; bottom: 8px; display: flex; gap: 6px; z-index: 20; }
+  #debug button { font: inherit; font-size: 14px; padding: 6px 10px; }
+</style>
+</head>
+<body data-state="idle">
+
+<!-- shared SVG parts -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="metal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#d5ddeb"/><stop offset="1" stop-color="#8a97b4"/>
+    </linearGradient>
+    <linearGradient id="metalDark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7a87a5"/><stop offset="1" stop-color="#4b5672"/>
+    </linearGradient>
+    <radialGradient id="glass" cx=".35" cy=".3" r=".8">
+      <stop offset="0" stop-color="#cfefff" stop-opacity=".35"/><stop offset="1" stop-color="#7ab8ff" stop-opacity=".08"/>
+    </radialGradient>
+    <symbol id="brainShape" viewBox="-110 -78 220 156">
+      <g style="fill:var(--brain)">
+        <circle cx="-62" cy="-8" r="44"/><circle cx="-22" cy="-36" r="40"/><circle cx="24" cy="-36" r="40"/>
+        <circle cx="62" cy="-6" r="44"/><circle cx="-46" cy="28" r="38"/><circle cx="4" cy="24" r="44"/>
+        <circle cx="52" cy="30" r="36"/>
+      </g>
+      <g fill="none" stroke-width="5" stroke-linecap="round" style="stroke:var(--brainLine)">
+        <path d="M0,-70 C-10,-42 10,-22 0,0 C-10,22 8,42 0,62"/>
+        <path d="M-84,-14 q14,-14 28,0 t28,0"/>
+        <path d="M-78,30 q12,-12 24,0 t24,0"/>
+        <path d="M28,-8 q14,-14 28,0 t28,0"/>
+        <path d="M24,40 q12,-12 24,0 t24,0"/>
+        <path d="M-44,-58 q12,10 2,24"/>
+        <path d="M40,-62 q-12,10 -2,24"/>
+      </g>
+      <ellipse cx="-42" cy="-48" rx="18" ry="8" fill="#fff" opacity=".35"/>
+    </symbol>
+    <clipPath id="eyeClip"><circle r="41"/></clipPath>
+    <clipPath id="jarClip"><path d="M128,86 L128,44 Q128,10 200,10 Q272,10 272,44 L272,86 Z"/></clipPath>
+    <radialGradient id="maskGrad" cx=".4" cy=".3" r=".75"><stop offset="0" stop-color="#ffffff"/><stop offset=".7" stop-color="#e8eaee"/><stop offset="1" stop-color="#b9bec8"/></radialGradient>
+    <linearGradient id="rimGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e6e9ef"/><stop offset=".5" stop-color="#7d8496"/><stop offset="1" stop-color="#3a3f4a"/></linearGradient>
+  </defs>
+</svg>
+
+<div id="app">
+  <div id="meter"><span class="ico">🧠</span><div class="track"><div id="fill"></div></div></div>
+
+  <svg id="robot" viewBox="0 0 400 560" preserveAspectRatio="xMidYMid meet" aria-label="Robot buddy">
+    <g id="robotAll">
+      <!-- chest / endoskeleton -->
+      <path d="M24,560 L34,478 Q44,446 112,444 L288,444 Q356,446 366,478 L376,560 Z" fill="#16181e" stroke="#2c3039" stroke-width="3"/>
+      <g>
+        <rect x="70" y="462" width="84" height="92" rx="6" fill="#1f7a3a" stroke="#0f4220" stroke-width="3"/>
+        <path d="M80,480 H110 V500 H140 M80,520 H100 V540 M120,530 H146" fill="none" stroke="#7fd68f" stroke-width="2.5" stroke-linecap="round"/>
+        <rect x="112" y="508" width="26" height="18" rx="2" fill="#111"/>
+        <circle id="ledL" cx="140" cy="476" r="6" fill="#5be37a"/>
+      </g>
+      <g>
+        <rect x="246" y="462" width="84" height="92" rx="6" fill="#1f7a3a" stroke="#0f4220" stroke-width="3"/>
+        <path d="M320,480 H290 V500 H260 M320,520 H300 V540 M280,530 H254" fill="none" stroke="#7fd68f" stroke-width="2.5" stroke-linecap="round"/>
+        <rect x="262" y="508" width="26" height="18" rx="2" fill="#111"/>
+        <circle id="ledR" cx="260" cy="476" r="6" fill="#5be37a"/>
+      </g>
+      <g transform="translate(200,480)">
+        <rect x="-32" y="-32" width="64" height="64" rx="8" fill="#0c0d11" stroke="#30343d" stroke-width="3"/>
+        <circle r="26" fill="#1d2027"/>
+        <g class="fan" fill="#4a505c">
+          <path d="M0,0 C6,-9 18,-12 23,-5 C16,0 8,3 0,0"/><path transform="rotate(72)" d="M0,0 C6,-9 18,-12 23,-5 C16,0 8,3 0,0"/>
+          <path transform="rotate(144)" d="M0,0 C6,-9 18,-12 23,-5 C16,0 8,3 0,0"/><path transform="rotate(216)" d="M0,0 C6,-9 18,-12 23,-5 C16,0 8,3 0,0"/>
+          <path transform="rotate(288)" d="M0,0 C6,-9 18,-12 23,-5 C16,0 8,3 0,0"/>
+        </g>
+        <circle r="7" fill="#3a3f4a"/>
+      </g>
+      <g transform="translate(200,546)">
+        <rect x="-32" y="-32" width="64" height="64" rx="8" fill="#0c0d11" stroke="#30343d" stroke-width="3"/>
+        <circle r="26" fill="#1d2027"/>
+        <g class="fan" fill="#4a505c">
+          <path d="M0,0 C6,-9 18,-12 23,-5 C16,0 8,3 0,0"/><path transform="rotate(72)" d="M0,0 C6,-9 18,-12 23,-5 C16,0 8,3 0,0"/>
+          <path transform="rotate(144)" d="M0,0 C6,-9 18,-12 23,-5 C16,0 8,3 0,0"/><path transform="rotate(216)" d="M0,0 C6,-9 18,-12 23,-5 C16,0 8,3 0,0"/>
+          <path transform="rotate(288)" d="M0,0 C6,-9 18,-12 23,-5 C16,0 8,3 0,0"/>
+        </g>
+        <circle r="7" fill="#3a3f4a"/>
+      </g>
+      <circle id="chestLight" cx="200" cy="513" r="5" fill="#5be37a"/>
+      <!-- neck -->
+      <rect x="178" y="372" width="44" height="80" rx="8" fill="#22252d"/>
+      <g fill="#3a3f4a"><rect x="172" y="392" width="56" height="6" rx="3"/><rect x="172" y="410" width="56" height="6" rx="3"/><rect x="172" y="428" width="56" height="6" rx="3"/></g>
+      <!-- wires -->
+      <g fill="none" stroke-width="5" stroke-linecap="round">
+        <path stroke="#ff4d4d" d="M186,380 C170,410 196,420 178,446 C164,466 130,470 120,464"/>
+        <path stroke="#ffd23f" d="M214,380 C232,410 204,424 222,446 C236,466 270,470 280,464"/>
+        <path stroke="#4da6ff" d="M198,380 C190,420 214,430 204,452"/>
+        <path stroke="#5be37a" d="M128,372 C116,410 150,428 126,452"/>
+        <path stroke="#ff9f1c" d="M272,372 C286,410 250,430 274,452"/>
+      </g>
+      <!-- jaw brackets + piston rods (stay put) -->
+      <rect x="98" y="232" width="28" height="70" rx="9" fill="#22252d"/>
+      <rect x="274" y="232" width="28" height="70" rx="9" fill="#22252d"/>
+      <rect x="108" y="280" width="8" height="80" rx="3" fill="#b8bfcc"/>
+      <rect x="284" y="280" width="8" height="80" rx="3" fill="#b8bfcc"/>
+      <!-- inside of the mouth -->
+      <path id="mouthHole" fill="#2a0a10" d="M118,298 Q200,330 282,298 L282,326 Q200,358 118,326 Z"/>
+      <!-- lower jaw (moves) -->
+      <g id="jaw">
+        <rect x="100" y="318" width="24" height="60" rx="9" fill="#22252d"/>
+        <rect x="276" y="318" width="24" height="60" rx="9" fill="#22252d"/>
+        <path d="M114,346 Q200,382 286,346 L290,372 Q200,414 110,372 Z" fill="#22252d"/>
+        <circle cx="150" cy="378" r="4" fill="#5d6886"/><circle cx="250" cy="378" r="4" fill="#5d6886"/>
+        <g id="teethLow"></g>
+        <path d="M118,344 Q200,374 282,344 L282,356 Q200,388 118,356 Z" fill="#e8899a"/>
+      </g>
+      <!-- brain jar -->
+      <path d="M128,86 L128,44 Q128,10 200,10 Q272,10 272,44 L272,86 Z" fill="#0d1a33"/>
+      <g clip-path="url(#jarClip)"><use id="domeBrain" href="#brainShape" x="134" y="24" width="132" height="94"/></g>
+      <path d="M128,86 L128,44 Q128,10 200,10 Q272,10 272,44 L272,86 Z" fill="url(#glass)" stroke="#a9d8ff" stroke-opacity=".5" stroke-width="3"/>
+      <path d="M144,72 V46 Q146,26 170,22" stroke="#fff" stroke-opacity=".45" stroke-width="6" fill="none" stroke-linecap="round"/>
+      <circle id="bulbGlow" cx="200" cy="10" r="16" fill="#5be37a" opacity=".3"/>
+      <circle id="bulb" cx="200" cy="10" r="7" fill="#5be37a"/>
+      <!-- mask face -->
+      <path d="M200,74 C298,74 330,138 326,198 C322,262 288,302 200,306 C112,302 78,262 74,198 C70,138 102,74 200,74 Z" fill="url(#maskGrad)" stroke="#aeb3bd" stroke-width="2"/>
+      <rect x="116" y="74" width="168" height="16" rx="8" fill="url(#metalDark)"/>
+      <!-- upper teeth + gum -->
+      <g id="teethUp"></g>
+      <path d="M118,290 Q200,322 282,290 L282,302 Q200,334 118,302 Z" fill="#e8899a"/>
+      <!-- eyes -->
+      <g transform="translate(150,186)">
+        <circle r="51" fill="url(#rimGrad)"/>
+        <circle r="43" fill="#0d0f14"/>
+        <g clip-path="url(#eyeClip)">
+          <circle r="41" fill="#fbfbf8"/>
+          <g id="pupilL"><circle r="25" fill="#050507"/><circle cx="-8" cy="-9" r="7" fill="#fff"/><circle cx="7" cy="8" r="3" fill="#fff" opacity=".6"/></g>
+          <rect id="lidL" x="-44" y="-44" width="88" height="0" fill="#e4e6ea"/>
+          <rect id="lowL" x="-44" y="44" width="88" height="0" fill="#e4e6ea"/>
+        </g>
+      </g>
+      <g transform="translate(250,186)">
+        <circle r="51" fill="url(#rimGrad)"/>
+        <circle r="43" fill="#0d0f14"/>
+        <g clip-path="url(#eyeClip)">
+          <circle r="41" fill="#fbfbf8"/>
+          <g id="pupilR"><circle r="25" fill="#050507"/><circle cx="-8" cy="-9" r="7" fill="#fff"/><circle cx="7" cy="8" r="3" fill="#fff" opacity=".6"/></g>
+          <rect id="lidR" x="-44" y="-44" width="88" height="0" fill="#e4e6ea"/>
+          <rect id="lowR" x="-44" y="44" width="88" height="0" fill="#e4e6ea"/>
+        </g>
+      </g>
+      <!-- broken effects -->
+      <g id="headFx">
+        <g fill="#ffe14d" stroke="#ff9f1c" stroke-width="1.5">
+          <path class="zz" transform="translate(104,62) scale(1.8)" d="M0,0 l8,-14 l-2,10 l10,-4 l-10,18 l2,-10 z"/>
+          <path class="zz" transform="translate(272,48) scale(1.8)" d="M0,0 l8,-14 l-2,10 l10,-4 l-10,18 l2,-10 z"/>
+          <path class="zz" transform="translate(226,30) scale(1.4)" d="M0,0 l8,-14 l-2,10 l10,-4 l-10,18 l2,-10 z"/>
+        </g>
+        <g fill="#9aa3b5">
+          <circle class="smoke" cx="186" cy="20" r="9"/>
+          <circle class="smoke" cx="210" cy="16" r="10"/>
+          <circle class="smoke" cx="198" cy="12" r="8"/>
+        </g>
+      </g>
+      <text id="tapHint" x="284" y="66" font-size="48">👈</text>
+    </g>
+  </svg>
+
+  <div id="bubble">Say something!</div>
+</div>
+
+<div id="start" class="overlay">
+  <div class="big">🤖</div>
+  <h1>RoboAshr</h1>
+  <p>Talk to me and I'll copy you! But watch my brain&nbsp;— it breaks, and you'll have to fix it.</p>
+  <button id="startBtn">Wake Up!</button>
+  <p id="startErr"></p>
+</div>
+
+<div id="repair" class="overlay hidden">
+  <h2 id="repairTitle">Fix my brain! 🔧</h2>
+  <div id="todo"></div>
+  <svg id="repairSvg" viewBox="0 0 400 440" preserveAspectRatio="xMidYMid meet"></svg>
+</div>
+
+<script>
+'use strict';
+const qs = new URLSearchParams(location.search);
+const BRAIN_MS = (parseFloat(qs.get('minutes')) || 4) * 60000;
+const PITCH = parseFloat(qs.get('pitch')) || 1.3;
+const SENS = parseFloat(qs.get('sens')) || 1;
+const NS = 'http://www.w3.org/2000/svg';
+const $ = id => document.getElementById(id);
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs || {}) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+const rand = (a, b) => a + Math.random() * (b - a);
+const randi = (a, b) => Math.floor(rand(a, b + 1));
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+const secs = () => performance.now() / 1000;
+
+/* ---------------- state ---------------- */
+let awake = false, broken = false, repairing = false;
+let state = 'idle';            // idle | listening | talking
+let brainMs = BRAIN_MS, warned30 = false, warned10 = false;
+let happyUntil = 0;
+let micOk = false, micMsg = '', micLevel = 0;
+let playing = false, speaking = false, cooldownUntil = 0;
+let recording = false, chunks = [], preRoll = [], silentSec = 0, voicedSec = 0, noiseFloor = 0.01;
+
+let ac = null, master, sfxBus, voiceBus, outAnalyser, freqData, noiseBuf, proc, micStream;
+
+function setState(s) { state = s; document.body.dataset.state = s; updateBubble(); }
+function updateBubble() {
+  const b = $('bubble');
+  let t = '';
+  if (broken) t = state === 'talking' ? '' : 'Uh oh! My brain broke! Tap it to fix! 🔧';
+  else if (!micOk) t = micMsg || "I can't hear you! 🙉";
+  else if (state === 'idle') t = "Say something! I'll copy you 🎤";
+  else if (state === 'listening') t = 'Listening… 👂';
+  b.textContent = t;
+  b.style.visibility = t ? 'visible' : 'hidden';
+}
+
+/* ---------------- audio setup ---------------- */
+function initAudio() {
+  ac = new (window.AudioContext || window.webkitAudioContext)();
+  master = ac.createDynamicsCompressor();
+  master.threshold.value = -14; master.ratio.value = 6;
+  outAnalyser = ac.createAnalyser(); outAnalyser.fftSize = 128; outAnalyser.smoothingTimeConstant = 0.5;
+  freqData = new Uint8Array(outAnalyser.frequencyBinCount);
+  master.connect(outAnalyser); outAnalyser.connect(ac.destination);
+  sfxBus = ac.createGain(); sfxBus.connect(master);
+  voiceBus = ac.createGain(); voiceBus.gain.value = 1.4; voiceBus.connect(master);
+  noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
+  const nd = noiseBuf.getChannelData(0);
+  for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+}
+
+async function initMic() {
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    micMsg = 'Microphone needs a secure (https) page 🔒';
+    return;
+  }
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    });
+  } catch (err) {
+    micMsg = (err && err.name === 'NotAllowedError')
+      ? "I can't hear you! 🙉 Allow the microphone."
+      : 'No microphone found 🎤';
+    return;
+  }
+  const src = ac.createMediaStreamSource(micStream);
+  proc = ac.createScriptProcessor(2048, 1, 1);
+  const mute = ac.createGain(); mute.gain.value = 0;
+  src.connect(proc); proc.connect(mute); mute.connect(ac.destination);
+  proc.onaudioprocess = onMic;
+  micOk = true;
+}
+
+function hush(sec) { if (ac) cooldownUntil = Math.max(cooldownUntil, ac.currentTime + sec + 0.4); }
+function canListen() {
+  return awake && micOk && !repairing && !playing && !speaking && ac.currentTime > cooldownUntil;
+}
+
+/* ---------------- listening (voice activity detection) ---------------- */
+function onMic(e) {
+  const d = e.inputBuffer.getChannelData(0);
+  let s = 0;
+  for (let i = 0; i < d.length; i++) s += d[i] * d[i];
+  const rms = Math.sqrt(s / d.length);
+  micLevel = micLevel * 0.6 + rms * 0.4;
+  const cs = d.length / ac.sampleRate;
+
+  if (!canListen()) {
+    if (recording) { recording = false; chunks = []; if (state === 'listening') setState('idle'); }
+    preRoll = [];
+    return;
+  }
+  const startT = Math.max(0.012, noiseFloor * 3) / SENS;
+  const copy = new Float32Array(d);
+  if (!recording) {
+    preRoll.push(copy);
+    while (preRoll.length * cs > 0.3) preRoll.shift();
+    if (rms > startT) {
+      recording = true; chunks = preRoll; preRoll = [];
+      silentSec = 0; voicedSec = cs;
+      setState('listening');
+    } else {
+      noiseFloor = Math.min(0.06, noiseFloor * 0.97 + rms * 0.03);
+    }
+  } else {
+    chunks.push(copy);
+    if (rms > startT * 0.55) { silentSec = 0; voicedSec += cs; } else silentSec += cs;
+    if (silentSec > 0.75 || chunks.length * cs > 8) finishRecording(cs);
+  }
+}
+
+function finishRecording(cs) {
+  recording = false;
+  let c = chunks; chunks = [];
+  if (voicedSec < 0.2) { setState('idle'); return; }
+  const drop = Math.max(0, Math.floor((silentSec - 0.15) / cs));
+  if (drop) c = c.slice(0, c.length - drop);
+  const len = c.reduce((a, b) => a + b.length, 0);
+  if (!len) { setState('idle'); return; }
+  const buf = ac.createBuffer(1, len, ac.sampleRate);
+  const ch = buf.getChannelData(0);
+  let o = 0;
+  for (const x of c) { ch.set(x, o); o += x.length; }
+  playVoice(buf);
+}
+
+/* ---------------- robot voice playback ---------------- */
+function playVoice(buf) {
+  playing = true;
+  setState('talking');
+  const ch = buf.getChannelData(0);
+  let pk = 0;
+  for (let i = 0; i < ch.length; i++) pk = Math.max(pk, Math.abs(ch[i]));
+  const g = Math.min(8, 0.9 / (pk || 1));
+  const fade = Math.min(480, ch.length >> 2);
+  for (let i = 0; i < ch.length; i++) {
+    let v = ch[i] * g;
+    if (i < fade) v *= i / fade;
+    if (i > ch.length - fade) v *= (ch.length - i) / fade;
+    ch[i] = v;
+  }
+  if (broken) ch.reverse();   // broken brain talks backwards!
+
+  const t = ac.currentTime + 0.05;
+  const src = ac.createBufferSource();
+  src.buffer = buf;
+  src.playbackRate.value = broken ? 0.72 : PITCH;
+
+  // ring modulator = classic robot voice
+  const dry = ac.createGain(); dry.gain.value = 0.5;
+  const ring = ac.createGain(); ring.gain.value = 0;
+  const osc = ac.createOscillator(); osc.frequency.value = broken ? 22 : 60;
+  const depth = ac.createGain(); depth.gain.value = 0.9;
+  osc.connect(depth); depth.connect(ring.gain);
+  src.connect(dry); src.connect(ring);
+  const mix = ac.createGain();
+  dry.connect(mix); ring.connect(mix);
+  // short metallic comb
+  const dl = ac.createDelay(0.1); dl.delayTime.value = 0.009;
+  const fb = ac.createGain(); fb.gain.value = 0.4;
+  const wet = ac.createGain(); wet.gain.value = 0.5;
+  mix.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet);
+  mix.connect(voiceBus); wet.connect(voiceBus);
+
+  osc.start(t); src.start(t);
+  src.onended = () => {
+    try { osc.stop(); } catch (e) {}
+    setTimeout(() => { mix.disconnect(); wet.disconnect(); fb.disconnect(); }, 400);
+    playing = false;
+    hush(0.1);
+    setState('idle');
+  };
+}
+
+/* ---------------- sound effects ---------------- */
+function tone(f, d, o) {
+  if (!ac) return;
+  o = o || {};
+  const t = ac.currentTime + (o.delay || 0);
+  const osc = ac.createOscillator(), g = ac.createGain();
+  osc.type = o.type || 'square';
+  osc.frequency.setValueAtTime(f, t);
+  if (o.slide) osc.frequency.exponentialRampToValueAtTime(o.slide, t + d);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(o.vol || 0.12, t + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+  osc.connect(g); g.connect(sfxBus);
+  osc.start(t); osc.stop(t + d + 0.05);
+  hush((o.delay || 0) + d);
+}
+function noise(d, o) {
+  if (!ac) return;
+  o = o || {};
+  const t = ac.currentTime + (o.delay || 0);
+  const s = ac.createBufferSource(); s.buffer = noiseBuf;
+  const f = ac.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = o.hp || 1000;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(o.vol || 0.2, t);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + d);
+  s.connect(f); f.connect(g); g.connect(sfxBus);
+  s.start(t, Math.random() * 0.5); s.stop(t + d + 0.02);
+  hush((o.delay || 0) + d);
+}
+const sfx = {
+  boot() { [523, 659, 784, 1047].forEach((f, i) => tone(f, .12, { delay: i * .09, vol: .08 })); tone(1568, .3, { delay: .4, type: 'triangle', vol: .1 }); },
+  giggle() { [900, 1200, 950, 1400].forEach((f, i) => tone(f, .08, { delay: i * .07, type: 'triangle', vol: .14, slide: f * 1.3 })); },
+  warn() { for (let i = 0; i < 3; i++) tone(880, .12, { delay: i * .25, vol: .08 }); },
+  brk() {
+    tone(700, 1.2, { type: 'sawtooth', vol: .12, slide: 50 });
+    noise(.5, { vol: .25, hp: 2000, delay: .1 }); noise(.3, { vol: .2, hp: 3000, delay: .7 });
+    tone(120, .4, { vol: .1, delay: 1.1, slide: 60 });
+  },
+  zap() { noise(.15, { vol: .25, hp: 3000 }); tone(1800, .12, { vol: .06, slide: 300 }); },
+  ratchet() { for (let i = 0; i < 3; i++) noise(.03, { vol: .3, hp: 4000, delay: i * .05 }); tone(300, .06, { vol: .05 }); },
+  plug() { tone(200, .12, { type: 'sine', vol: .3, slide: 900 }); tone(1200, .1, { type: 'triangle', vol: .1, delay: .1 }); },
+  buzz() { tone(110, .3, { type: 'sawtooth', vol: .12 }); },
+  crackle() { noise(.05, { vol: .06, hp: 5000 }); },
+  fanfare() {
+    [523, 659, 784, 1047, 784, 1047].forEach((f, i) => tone(f, i === 5 ? .5 : .14, { delay: i * .12, vol: .09 }));
+    [1568, 2093, 2637].forEach((f, i) => tone(f, .12, { delay: .8 + i * .06, type: 'triangle', vol: .06 }));
+  }
+};
+
+/* the robot can talk with the built-in voice, if the tablet has one */
+function say(text) {
+  try {
+    if (!('speechSynthesis' in window)) return;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.pitch = 1.8; u.rate = 1.05;
+    speaking = true;
+    let doneCalled = false;
+    const done = () => { if (doneCalled) return; doneCalled = true; speaking = false; hush(0.2); };
+    u.onend = done; u.onerror = done;
+    setTimeout(done, 7000);
+    speechSynthesis.speak(u);
+  } catch (e) { speaking = false; }
+}
+
+/* ---------------- face animation ---------------- */
+const smile = x => 15 * (1 - Math.pow((x - 200) / 80, 2));
+for (let i = 0; i < 8; i++) {
+  const cx = 137 + i * 18;
+  el('rect', { x: cx - 8, y: (298 + smile(cx)).toFixed(1), width: 16, height: 25, rx: 6, class: 'tooth' }, $('teethUp'));
+  el('rect', { x: cx - 8, y: (324 + smile(cx)).toFixed(1), width: 16, height: 25, rx: 6, class: 'tooth' }, $('teethLow'));
+}
+const face = { px: 0, py: 0, tx: 0, ty: 0, nextLook: 0, blinkStart: -9, nextBlink: 2, jaw: 0 };
+
+function animateFace(t, dt) {
+  const happy = t < happyUntil && !broken;
+  document.body.classList.toggle('happy', happy);
+
+  // googly eyes look around; stare at you while listening
+  if (state === 'listening') { face.tx = 0; face.ty = 4; }
+  else if (t > face.nextLook) {
+    face.tx = rand(-14, 14); face.ty = rand(-10, 10);
+    face.nextLook = t + rand(1, 3.5);
+  }
+  const k = 1 - Math.pow(0.0005, dt);
+  face.px += (face.tx - face.px) * k;
+  face.py += (face.ty - face.py) * k;
+  let lx = face.px, ly = face.py, rx = face.px, ry = face.py;
+  if (broken) {           // dizzy eyes spin different ways
+    lx = Math.cos(t * 6) * 13; ly = Math.sin(t * 6) * 13;
+    rx = Math.cos(-t * 4.3 + 1) * 13; ry = Math.sin(-t * 4.3 + 1) * 13;
+  }
+  if (happy) { ly = ry = -6; }
+  const sc = state === 'listening' ? 1.12 : 1;
+  $('pupilL').setAttribute('transform', `translate(${lx.toFixed(1)},${ly.toFixed(1)}) scale(${sc})`);
+  $('pupilR').setAttribute('transform', `translate(${rx.toFixed(1)},${ry.toFixed(1)}) scale(${sc})`);
+
+  // blink, droopy lid when broken, smiley lower lids when happy
+  if (t > face.nextBlink) { face.blinkStart = t; face.nextBlink = t + rand(2, 6); }
+  const bp = (t - face.blinkStart) / 0.16;
+  const blink = (bp >= 0 && bp < 1) ? (1 - Math.abs(bp * 2 - 1)) * 88 : 0;
+  $('lidL').setAttribute('height', Math.max(blink, broken ? 34 : 0));
+  $('lidR').setAttribute('height', blink);
+  const low = happy ? 30 : 0;
+  for (const id of ['lowL', 'lowR']) { $(id).setAttribute('y', 44 - low); $(id).setAttribute('height', low); }
+
+  // jaw chomps with the robot voice
+  let target = 0.03;
+  if (state === 'talking' && outAnalyser) {
+    outAnalyser.getByteFrequencyData(freqData);
+    let s = 0;
+    for (let i = 1; i < 14; i++) s += freqData[i];
+    target = clamp(s / (13 * 255) * 2.4, 0, 1);
+  }
+  else if (speaking) target = 0.25 + 0.35 * Math.abs(Math.sin(t * 9));
+  else if (broken) target = 0.15 + 0.15 * Math.abs(Math.sin(t * 23));
+  else if (state === 'listening') target = 0.1;
+  else if (happy) target = 0.45;
+  face.jaw += (target - face.jaw) * Math.min(1, dt * 25);
+  const dy = face.jaw * 46;
+  $('jaw').setAttribute('transform', (broken ? 'rotate(7 200 330) ' : '') + `translate(0,${dy.toFixed(1)})`);
+  $('mouthHole').setAttribute('d', `M118,298 Q200,330 282,298 L282,${(326 + dy).toFixed(1)} Q200,${(358 + dy).toFixed(1)} 118,${(326 + dy).toFixed(1)} Z`);
+
+  // chest LEDs glow with the microphone so the kid sees it's hearing
+  const ear = canListenSafe() ? clamp(0.25 + micLevel * 30, 0.25, 1) : 0.15;
+  $('ledL').setAttribute('opacity', ear); $('ledR').setAttribute('opacity', ear);
+
+  // jar light
+  let bulb = '#5be37a', on = 0.5 + 0.5 * Math.sin(t * 2);
+  if (broken) { bulb = '#ff4d6d'; on = (t * 6 % 1) < 0.5 ? 1 : 0.1; }
+  else if (document.body.classList.contains('fuzzy')) { bulb = '#ffd23f'; on = (t * 3 % 1) < 0.5 ? 1 : 0.2; }
+  else if (state === 'listening') { on = 1; }
+  else if (state === 'talking') { bulb = '#4df0ff'; on = 1; }
+  $('bulb').setAttribute('fill', bulb); $('bulbGlow').setAttribute('fill', bulb);
+  $('bulb').setAttribute('opacity', 0.4 + 0.6 * on);
+  $('bulbGlow').setAttribute('opacity', 0.1 + 0.35 * on);
+  $('chestLight').setAttribute('fill', broken ? '#ff4d6d' : bulb);
+}
+function canListenSafe() { return ac && canListen(); }
+
+/* ---------------- brain timer ---------------- */
+function updateMeter() {
+  const pct = clamp(brainMs / BRAIN_MS, 0, 1);
+  const f = $('fill');
+  f.style.width = (pct * 100).toFixed(1) + '%';
+  f.style.background = `hsl(${Math.round(pct * 120)}, 75%, 55%)`;
+  document.body.classList.toggle('fuzzy', !broken && awake && brainMs <= Math.min(30000, BRAIN_MS * 0.25));
+}
+
+function breakBrain() {
+  broken = true;
+  document.body.classList.add('broken');
+  sfx.brk();
+  setTimeout(() => { if (broken && !repairing) say('Uh oh! My brain is broken! Can you fix it?'); }, 1400);
+  updateBubble();
+}
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(100, now - last); last = now;
+  if (awake && !broken && !repairing) {
+    brainMs -= dt;
+    const warnAt = Math.min(30000, BRAIN_MS * 0.25);
+    if (brainMs <= warnAt && !warned30) { warned30 = true; sfx.warn(); say('My brain is getting fuzzy!'); }
+    if (brainMs <= 10000 && !warned10) { warned10 = true; sfx.warn(); }
+    if (brainMs <= 0) { brainMs = 0; breakBrain(); }
+  }
+  updateMeter();
+  animateFace(now / 1000, dt / 1000);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* ---------------- tapping the robot ---------------- */
+$('robot').addEventListener('pointerdown', () => {
+  if (!awake || repairing) return;
+  if (broken) { openRepair(); return; }
+  if (state === 'talking') return;
+  happyUntil = secs() + 1.4;
+  sfx.giggle();
+});
+$('bubble').addEventListener('pointerdown', () => { if (awake && broken && !repairing) openRepair(); });
+
+/* ---------------- repair mini-game ---------------- */
+const rs = $('repairSvg');
+let R = null, crackleTimer = 0;
+const WIRE_COLORS = [['#ff4d4d', '#8f1d1d'], ['#ffd23f', '#8a6a00'], ['#4da6ff', '#1d4f8f']];
+
+function svgPoint(e) {
+  const p = rs.createSVGPoint(); p.x = e.clientX; p.y = e.clientY;
+  return p.matrixTransform(rs.getScreenCTM().inverse());
+}
+function hex2rgb(h) { const n = parseInt(h.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; }
+function mix(a, b, t) { const A = hex2rgb(a), B = hex2rgb(b); return `rgb(${A.map((v, i) => Math.round(v + (B[i] - v) * t)).join(',')})`; }
+
+function openRepair() {
+  repairing = true;
+  try { speechSynthesis.cancel(); } catch (e) {}
+  speaking = false;
+  $('repair').classList.remove('hidden');
+  buildRepair();
+  crackleTimer = setInterval(() => { if (R && R.left.sparks > 0) sfx.crackle(); }, 1100);
+}
+
+function closeRepair() {
+  clearInterval(crackleTimer);
+  $('repair').classList.add('hidden');
+  rs.innerHTML = '';
+  broken = false; repairing = false;
+  document.body.classList.remove('broken');
+  brainMs = BRAIN_MS; warned30 = false; warned10 = false;
+  happyUntil = secs() + 2.5;
+  setState('idle');
+  say('Thank you! My brain is all fixed!');
+}
+
+function buildRepair() {
+  rs.innerHTML = '';
+  const types = shuffle(['sparks', 'bolts', 'wires']).slice(0, randi(2, 3));
+  const n = {
+    sparks: types.includes('sparks') ? randi(3, 5) : 0,
+    bolts: types.includes('bolts') ? randi(2, 4) : 0,
+    wires: types.includes('wires') ? randi(1, 3) : 0
+  };
+  R = { left: { ...n }, total: n.sparks + n.bolts + n.wires, fixed: 0, drag: null, done: false };
+
+  // panel
+  el('rect', { x: 8, y: 8, width: 384, height: 424, rx: 30, fill: 'url(#metal)', stroke: '#3b4560', 'stroke-width': 4 }, rs);
+  el('rect', { x: 28, y: 28, width: 344, height: 384, rx: 20, fill: '#18203a' }, rs);
+  const deco = el('g', { fill: 'none', stroke: '#26304f', 'stroke-width': 4, 'stroke-linecap': 'round' }, rs);
+  ['M40,230 H80 V270 H120', 'M360,230 H320 V260 H290', 'M60,120 H85', 'M340,120 H315', 'M150,410 V395 H250 V410'].forEach(d => el('path', { d }, deco));
+  const label = el('text', { x: 200, y: 425, 'text-anchor': 'middle', 'font-size': 11, fill: '#5d6886', 'font-weight': 700 }, rs);
+  label.textContent = 'ROBO-BRAIN 3000';
+
+  const brain = el('use', { href: '#brainShape', x: 90, y: 50, width: 220, height: 156 }, rs);
+  R.brain = brain;
+  paintBrain();
+
+  const wireLayer = el('g', {}, rs), sockLayer = el('g', {}, rs), plugLayer = el('g', {}, rs);
+  const sparkLayer = el('g', {}, rs), boltLayer = el('g', {}, rs);
+  R.fx = el('g', {}, rs);
+
+  /* bolts in the corners */
+  const corners = shuffle([[54, 54], [346, 54], [54, 386], [346, 386]]);
+  corners.forEach(([x, y], i) => makeBolt(boltLayer, x, y, i < n.bolts));
+
+  /* sparks on the brain */
+  const pts = [];
+  while (pts.length < n.sparks) {
+    const a = rand(0, Math.PI * 2), r = Math.sqrt(Math.random());
+    const p = [200 + Math.cos(a) * r * 82, 128 + Math.sin(a) * r * 52];
+    if (pts.every(q => Math.hypot(q[0] - p[0], q[1] - p[1]) > 50) || pts.length > 40) pts.push(p);
+  }
+  pts.forEach(p => makeSpark(sparkLayer, p[0], p[1]));
+
+  /* wires: plug each one into the matching color */
+  if (n.wires) {
+    const cols = shuffle(WIRE_COLORS.slice()).slice(0, n.wires);
+    const sockX = shuffle([110, 200, 290]).slice(0, n.wires);
+    const plugX = shuffle([120, 200, 280]).slice(0, n.wires);
+    R.sockets = [];
+    R.wires = cols.map((c, k) => {
+      const ax = 200 + (k - (n.wires - 1) / 2) * 44;
+      const sock = { x: sockX[k], y: 300, color: c[0] };
+      R.sockets.push(sock);
+      const sg = el('g', { transform: `translate(${sock.x},${sock.y})` }, sockLayer);
+      sock.ring = el('circle', { r: 32, fill: 'none', stroke: c[0], 'stroke-width': 4, class: 'ring', opacity: .6 }, sg);
+      el('circle', { r: 22, fill: '#0b1020', stroke: c[0], 'stroke-width': 7 }, sg);
+      el('rect', { x: -8, y: -4, width: 5, height: 10, rx: 2, fill: '#000' }, sg);
+      el('rect', { x: 3, y: -4, width: 5, height: 10, rx: 2, fill: '#000' }, sg);
+      const w = { color: c[0], dark: c[1], ax, ay: 192, sx: plugX[k], sy: 372 + rand(-6, 6), done: false };
+      w.x = w.sx; w.y = w.sy;
+      w.path = el('path', { fill: 'none', stroke: c[0], 'stroke-width': 9, 'stroke-linecap': 'round' }, wireLayer);
+      w.g = el('g', {}, plugLayer);
+      el('circle', { r: 36, fill: 'transparent' }, w.g);
+      el('rect', { x: -7, y: 14, width: 4, height: 10, rx: 1, fill: '#d0d6e2' }, w.g);
+      el('rect', { x: 3, y: 14, width: 4, height: 10, rx: 1, fill: '#d0d6e2' }, w.g);
+      el('rect', { x: -14, y: -16, width: 28, height: 32, rx: 7, fill: c[0], stroke: c[1], 'stroke-width': 3 }, w.g);
+      el('rect', { x: -8, y: -10, width: 16, height: 5, rx: 2, fill: c[1], opacity: .6 }, w.g);
+      w.g.addEventListener('pointerdown', e => {
+        if (w.done || R.done) return;
+        e.preventDefault();
+        R.drag = { w, id: e.pointerId };
+        rs.setPointerCapture(e.pointerId);
+        plugLayer.appendChild(w.g);
+        tone(500, .05, { type: 'triangle', vol: .08 });
+      });
+      drawWire(w);
+      return w;
+    });
+  }
+  updateTodo();
+}
+
+function paintBrain() {
+  const t = R.total ? R.fixed / R.total : 1;
+  R.brain.style.setProperty('--brain', mix('#8c8f99', '#ff8fb1', t));
+  R.brain.style.setProperty('--brainLine', mix('#5d606b', '#d9577f', t));
+}
+
+function drawWire(w) {
+  w.path.setAttribute('d', `M${w.ax},${w.ay} C${w.ax},${w.ay + 90} ${w.x},${w.y - 100} ${w.x},${w.y - 14}`);
+  w.g.setAttribute('transform', `translate(${w.x.toFixed(1)},${w.y.toFixed(1)})`);
+}
+
+rs.addEventListener('pointermove', e => {
+  if (!R || !R.drag || R.drag.id !== e.pointerId) return;
+  const p = svgPoint(e), w = R.drag.w;
+  w.x = clamp(p.x, 30, 370);
+  w.y = clamp(p.y - 22, 40, 400);   // keep plug above the finger
+  drawWire(w);
+});
+function endDrag(e) {
+  if (!R || !R.drag || R.drag.id !== e.pointerId) return;
+  const w = R.drag.w; R.drag = null;
+  let best = null, bd = 48;
+  for (const s of R.sockets) {
+    if (s.taken) continue;
+    const d = Math.hypot(s.x - w.x, s.y - (w.y + 12));
+    if (d < bd) { bd = d; best = s; }
+  }
+  if (!best) return;
+  if (best.color === w.color) {
+    best.taken = true; w.done = true;
+    w.x = best.x; w.y = best.y - 12;
+    drawWire(w);
+    best.ring.remove();
+    sfx.plug();
+    burst(best.x, best.y, w.color);
+    fixedOne('wires');
+  } else {
+    sfx.buzz();
+    w.x = w.sx; w.y = w.sy;
+    drawWire(w);
+  }
+}
+rs.addEventListener('pointerup', endDrag);
+rs.addEventListener('pointercancel', endDrag);
+
+function makeBolt(layer, x, y, loose) {
+  const outer = el('g', { transform: `translate(${x},${y})` }, layer);
+  const wig = el('g', { class: loose ? 'loose' : '' }, outer);
+  const inner = el('g', { class: 'boltTurn' }, wig);
+  const shadow = el('circle', { cx: 4, cy: 6, r: 22, fill: 'rgba(0,0,0,.35)' }, inner);
+  const hex = [];
+  for (let i = 0; i < 6; i++) { const a = Math.PI / 3 * i; hex.push((Math.cos(a) * 20).toFixed(1) + ',' + (Math.sin(a) * 20).toFixed(1)); }
+  el('polygon', { points: hex.join(' '), fill: '#d7dde8', stroke: '#6b7590', 'stroke-width': 3 }, inner);
+  el('circle', { r: 9, fill: '#aab3c5' }, inner);
+  el('path', { d: 'M-6,0 H6 M0,-6 V6', stroke: '#5d6886', 'stroke-width': 3, 'stroke-linecap': 'round' }, inner);
+  if (!loose) { shadow.remove(); inner.style.transform = 'scale(.8)'; return; }
+  const ring = el('circle', { r: 32, fill: 'none', stroke: '#ffd23f', 'stroke-width': 4, 'stroke-dasharray': '8 6', class: 'ring' }, outer);
+  el('circle', { r: 38, fill: 'transparent' }, outer);
+  let turns = 3, rot = rand(10, 50);
+  const apply = () => { inner.style.transform = `rotate(${rot}deg) scale(${(1 + turns * 0.14).toFixed(2)})`; };
+  apply();
+  outer.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    if (turns <= 0 || R.done) return;
+    turns--; rot += 120; apply();
+    sfx.ratchet();
+    if (turns === 0) {
+      wig.classList.remove('loose'); ring.remove(); shadow.remove();
+      burst(x, y, '#5be37a');
+      fixedOne('bolts');
+    }
+  });
+}
+
+function makeSpark(layer, x, y) {
+  const outer = el('g', { transform: `translate(${x.toFixed(1)},${y.toFixed(1)})` }, layer);
+  const inner = el('g', { class: 'spark' }, outer);
+  inner.style.animationDelay = rand(0, .3).toFixed(2) + 's';
+  el('circle', { r: 22, fill: '#ffe14d', opacity: .3 }, inner);
+  const pts = [];
+  for (let i = 0; i < 16; i++) { const a = Math.PI / 8 * i, r = i % 2 ? 8 : 20; pts.push((Math.cos(a) * r).toFixed(1) + ',' + (Math.sin(a) * r).toFixed(1)); }
+  el('polygon', { points: pts.join(' '), fill: '#fff36b', stroke: '#ff9f1c', 'stroke-width': 2.5, 'stroke-linejoin': 'round' }, inner);
+  el('circle', { r: 32, fill: 'transparent' }, outer);
+  let gone = false;
+  outer.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    if (gone || R.done) return;
+    gone = true;
+    sfx.zap();
+    burst(x, y, '#fff36b');
+    outer.remove();
+    fixedOne('sparks');
+  });
+}
+
+function burst(x, y, color) {
+  for (let i = 0; i < 10; i++) {
+    const a = Math.PI * 2 * i / 10 + rand(-.2, .2), d = rand(30, 60);
+    const c = el('circle', { cx: x, cy: y, r: rand(3, 6), fill: color }, R.fx);
+    const anim = c.animate(
+      [{ transform: 'translate(0,0)', opacity: 1 }, { transform: `translate(${Math.cos(a) * d}px,${Math.sin(a) * d}px)`, opacity: 0 }],
+      { duration: 500, easing: 'ease-out' });
+    anim.onfinish = () => c.remove();
+  }
+}
+
+function fixedOne(type) {
+  R.left[type]--; R.fixed++;
+  paintBrain();
+  updateTodo();
+  if (R.fixed >= R.total) win();
+}
+
+function updateTodo() {
+  const icons = { sparks: '⚡', bolts: '🔩', wires: '🔌' };
+  $('todo').innerHTML = '';
+  for (const k of ['sparks', 'bolts', 'wires']) {
+    if (R.left[k] === 0 && !R['had_' + k]) continue;
+    R['had_' + k] = true;
+    const d = document.createElement('div');
+    d.className = 'chip' + (R.left[k] === 0 ? ' done' : '');
+    d.textContent = icons[k] + ' ' + (R.left[k] === 0 ? '✓' : R.left[k]);
+    $('todo').appendChild(d);
+  }
+}
+
+function win() {
+  R.done = true;
+  clearInterval(crackleTimer);
+  sfx.fanfare();
+  const msg = document.createElement('div');
+  msg.id = 'fixedMsg'; msg.textContent = 'Brain fixed! 🎉';
+  $('repair').appendChild(msg);
+  const colors = ['#ff4d6d', '#ffd23f', '#4da6ff', '#5be37a', '#ff8fb1', '#b38cff'];
+  for (let i = 0; i < 70; i++) {
+    const c = document.createElement('div');
+    c.className = 'confetti';
+    c.style.left = rand(0, 100) + 'vw';
+    c.style.background = colors[i % colors.length];
+    c.style.animationDuration = rand(1.6, 3) + 's';
+    c.style.animationDelay = rand(0, .5) + 's';
+    $('repair').appendChild(c);
+  }
+  setTimeout(() => {
+    document.querySelectorAll('#repair .confetti, #fixedMsg').forEach(n => n.remove());
+    closeRepair();
+  }, 2800);
+}
+
+/* ---------------- wake up ---------------- */
+let wakeLock = null;
+async function keepAwake() { try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {} }
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && awake) { keepAwake(); if (ac) ac.resume(); }
+});
+
+$('startBtn').addEventListener('click', async () => {
+  $('startBtn').disabled = true;
+  try { const r = document.documentElement.requestFullscreen && document.documentElement.requestFullscreen(); if (r && r.catch) r.catch(() => {}); } catch (e) {}
+  try { initAudio(); ac.resume(); } catch (e) { $('startErr').textContent = 'Sound is not supported on this browser.'; $('startBtn').disabled = false; return; }
+  keepAwake();
+  await initMic();
+  awake = true;
+  $('start').classList.add('hidden');
+  sfx.boot();
+  happyUntil = secs() + 1.5;
+  setState('idle');
+});
+
+/* ---------------- grown-up test hooks: add ?debug to the URL ---------------- */
+window.robot = {
+  breakNow() { brainMs = 1; },
+  fix() { if (repairing) win(); },
+  testVoice(sec = 1.2) {
+    const sr = ac.sampleRate, b = ac.createBuffer(1, sr * sec, sr), d = b.getChannelData(0);
+    for (let i = 0; i < d.length; i++) {
+      const t = i / sr, f = 160 + 40 * Math.sin(t * 6);
+      d[i] = (Math.sin(2 * Math.PI * f * t) + .5 * Math.sin(4 * Math.PI * f * t) + .3 * Math.sin(6 * Math.PI * f * t)) * Math.abs(Math.sin(t * 9)) * .3;
+    }
+    playVoice(b);
+  }
+};
+if (qs.has('debug')) {
+  const dbg = document.createElement('div'); dbg.id = 'debug';
+  [['Break brain', () => robot.breakNow()], ['Test voice', () => robot.testVoice()], ['Fix', () => robot.fix()]].forEach(([l, f]) => {
+    const b = document.createElement('button'); b.textContent = l; b.onclick = f; dbg.appendChild(b);
+  });
+  document.body.appendChild(dbg);
+}
+updateBubble();
+</script>
+</body>
+</html>

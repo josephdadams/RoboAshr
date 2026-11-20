@@ -99,6 +99,18 @@
   @keyframes pop { from { transform: scale(.2); opacity: 0; } }
   .confetti { position: absolute; top: -24px; width: 14px; height: 20px; border-radius: 3px; animation: fall linear forwards; pointer-events: none; }
   @keyframes fall { to { transform: translateY(115vh) rotate(800deg); } }
+  #zzz { display: none; }
+  .asleep #zzz { display: inline; }
+  .z { animation: zfloat 2.4s ease-in-out infinite; opacity: 0; }
+  .z:nth-child(2) { animation-delay: .8s; }
+  .z:nth-child(3) { animation-delay: 1.6s; }
+  @keyframes zfloat { 0% { opacity: 0; transform: translateY(10px); } 30% { opacity: 1; } 100% { opacity: 0; transform: translateY(-16px); } }
+  .asleep .fan { animation-duration: 3s; }
+  .asleep #meter { opacity: .45; }
+  .dance #robotAll { animation: dance .35s ease-in-out infinite alternate; }
+  @keyframes dance { from { transform: rotate(-6deg); } to { transform: rotate(6deg) translateY(-10px); } }
+  #status { position: fixed; left: 8px; bottom: 8px; z-index: 20; font: 12px/1.3 ui-monospace, monospace; background: rgba(0,0,0,.6); padding: 4px 8px; border-radius: 6px; max-width: 60vw; }
+  #debug input { font: inherit; font-size: 14px; padding: 5px 8px; width: 13em; }
   #debug { position: fixed; right: 8px; bottom: 8px; display: flex; gap: 6px; z-index: 20; }
   #debug button { font: inherit; font-size: 14px; padding: 6px 10px; }
 </style>
@@ -255,6 +267,11 @@
           <circle class="smoke" cx="198" cy="12" r="8"/>
         </g>
       </g>
+      <g id="zzz" font-weight="900" fill="#9fd3ff">
+        <text class="z" x="286" y="74" font-size="26">Z</text>
+        <text class="z" x="306" y="50" font-size="34">Z</text>
+        <text class="z" x="330" y="22" font-size="42">Z</text>
+      </g>
       <text id="tapHint" x="284" y="66" font-size="48">👈</text>
     </g>
   </svg>
@@ -311,12 +328,21 @@ function setState(s) { state = s; document.body.dataset.state = s; updateBubble(
 function updateBubble() {
   const b = $('bubble');
   let t = '';
-  if (broken) t = state === 'talking' ? '' : 'Uh oh! My brain broke! Tap it to fix! 🔧';
+  if (bubbleMsg) t = bubbleMsg;
+  else if (asleep) t = 'Zzz… wave at me to wake me up 👋';
+  else if (broken) t = state === 'talking' ? '' : 'Uh oh! My brain broke! Tap it to fix! 🔧';
   else if (!micOk) t = micMsg || "I can't hear you! 🙉";
-  else if (state === 'idle') t = "Say something! I'll copy you 🎤";
+  else if (state === 'idle') t = rec ? 'Say "Robo…" to ask me things, or talk and I\'ll copy you! 🎤' : "Say something! I'll copy you 🎤";
   else if (state === 'listening') t = 'Listening… 👂';
   b.textContent = t;
   b.style.visibility = t ? 'visible' : 'hidden';
+}
+let bubbleMsg = '', bubbleTimer = 0, talkUntil = 0;
+function showMsg(text, sec) {
+  bubbleMsg = text;
+  clearTimeout(bubbleTimer);
+  bubbleTimer = setTimeout(() => { bubbleMsg = ''; updateBubble(); }, sec * 1000);
+  updateBubble();
 }
 
 /* ---------------- audio setup ---------------- */
@@ -359,7 +385,7 @@ async function initMic() {
 
 function hush(sec) { if (ac) cooldownUntil = Math.max(cooldownUntil, ac.currentTime + sec + 0.4); }
 function canListen() {
-  return awake && micOk && !repairing && !playing && !speaking && ac.currentTime > cooldownUntil;
+  return awake && micOk && !repairing && !playing && !speaking && !asleep && !pending && ac.currentTime > cooldownUntil;
 }
 
 /* ---------------- listening (voice activity detection) ---------------- */
@@ -370,13 +396,17 @@ function onMic(e) {
   const rms = Math.sqrt(s / d.length);
   micLevel = micLevel * 0.6 + rms * 0.4;
   const cs = d.length / ac.sampleRate;
+  // some tablets give the microphone only to speech recognition; notice when we get pure silence
+  if (rms < 1e-6) starvedSec += cs; else starvedSec = 0;
+  micStarved = !!rec && starvedSec > 4;
+  const startT = Math.max(0.012, noiseFloor * 3) / SENS;
 
   if (!canListen()) {
+    if (asleep && awake && !speaking && rms > startT * 2) noteActivity();   // talking wakes it up
     if (recording) { recording = false; chunks = []; if (state === 'listening') setState('idle'); }
     preRoll = [];
     return;
   }
-  const startT = Math.max(0.012, noiseFloor * 3) / SENS;
   const copy = new Float32Array(d);
   if (!recording) {
     preRoll.push(copy);
@@ -384,6 +414,8 @@ function onMic(e) {
     if (rms > startT) {
       recording = true; chunks = preRoll; preRoll = [];
       silentSec = 0; voicedSec = cs;
+      recStartAt = secs(); interimWake = false;
+      noteActivity();
       setState('listening');
     } else {
       noiseFloor = Math.min(0.06, noiseFloor * 0.97 + rms * 0.03);
@@ -407,7 +439,7 @@ function finishRecording(cs) {
   const ch = buf.getChannelData(0);
   let o = 0;
   for (const x of c) { ch.set(x, o); o += x.length; }
-  playVoice(buf);
+  heardAudio(buf);
 }
 
 /* ---------------- robot voice playback ---------------- */
@@ -507,20 +539,29 @@ const sfx = {
   }
 };
 
-/* the robot can talk with the built-in voice, if the tablet has one */
-function say(text) {
+/* the robot talks with the tablet's built-in voice, and the words show in the bubble */
+function say(text, done, pitch) {
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true; speaking = false; hush(0.3);
+    if (done) done();
+  };
+  showMsg('🤖 ' + text, Math.max(3, text.length * 0.07 + 2));
+  speaking = true;
   try {
-    if (!('speechSynthesis' in window)) return;
+    if (!('speechSynthesis' in window)) throw new Error('no voice');
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    u.pitch = 1.8; u.rate = 1.05;
-    speaking = true;
-    let doneCalled = false;
-    const done = () => { if (doneCalled) return; doneCalled = true; speaking = false; hush(0.2); };
-    u.onend = done; u.onerror = done;
-    setTimeout(done, 7000);
+    u.pitch = pitch || 1.8; u.rate = 1.05;
+    u.onend = finish; u.onerror = finish;
+    setTimeout(finish, 4000 + text.length * 90);
     speechSynthesis.speak(u);
-  } catch (e) { speaking = false; }
+  } catch (e) {
+    const sec = Math.min(6, 0.5 + text.length * 0.06);
+    talkUntil = secs() + sec;
+    setTimeout(finish, sec * 1000);
+  }
 }
 
 /* ---------------- face animation ---------------- */
@@ -559,20 +600,21 @@ function animateFace(t, dt) {
   if (t > face.nextBlink) { face.blinkStart = t; face.nextBlink = t + rand(2, 6); }
   const bp = (t - face.blinkStart) / 0.16;
   const blink = (bp >= 0 && bp < 1) ? (1 - Math.abs(bp * 2 - 1)) * 88 : 0;
-  $('lidL').setAttribute('height', Math.max(blink, broken ? 34 : 0));
-  $('lidR').setAttribute('height', blink);
+  $('lidL').setAttribute('height', asleep ? 88 : Math.max(blink, broken ? 34 : 0));
+  $('lidR').setAttribute('height', asleep ? 88 : blink);
   const low = happy ? 30 : 0;
   for (const id of ['lowL', 'lowR']) { $(id).setAttribute('y', 44 - low); $(id).setAttribute('height', low); }
 
   // jaw chomps with the robot voice
   let target = 0.03;
-  if (state === 'talking' && outAnalyser) {
+  if (asleep) target = 0;
+  else if (state === 'talking' && outAnalyser) {
     outAnalyser.getByteFrequencyData(freqData);
     let s = 0;
     for (let i = 1; i < 14; i++) s += freqData[i];
     target = clamp(s / (13 * 255) * 2.4, 0, 1);
   }
-  else if (speaking) target = 0.25 + 0.35 * Math.abs(Math.sin(t * 9));
+  else if (speaking || t < talkUntil) target = 0.25 + 0.35 * Math.abs(Math.sin(t * 9));
   else if (broken) target = 0.15 + 0.15 * Math.abs(Math.sin(t * 23));
   else if (state === 'listening') target = 0.1;
   else if (happy) target = 0.45;
@@ -588,6 +630,7 @@ function animateFace(t, dt) {
   // jar light
   let bulb = '#5be37a', on = 0.5 + 0.5 * Math.sin(t * 2);
   if (broken) { bulb = '#ff4d6d'; on = (t * 6 % 1) < 0.5 ? 1 : 0.1; }
+  else if (asleep) { bulb = '#4da6ff'; on = 0.3 + 0.3 * Math.sin(t * 1.5); }
   else if (document.body.classList.contains('fuzzy')) { bulb = '#ffd23f'; on = (t * 3 % 1) < 0.5 ? 1 : 0.2; }
   else if (state === 'listening') { on = 1; }
   else if (state === 'talking') { bulb = '#4df0ff'; on = 1; }
@@ -618,7 +661,9 @@ function breakBrain() {
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(100, now - last); last = now;
-  if (awake && !broken && !repairing) {
+  if (awake && camOk && !asleep && !repairing && !playing && !speaking && !recording &&
+      now - lastActivity > AWAY_MS) goToSleep();
+  if (awake && !broken && !repairing && !asleep) {
     brainMs -= dt;
     const warnAt = Math.min(30000, BRAIN_MS * 0.25);
     if (brainMs <= warnAt && !warned30) { warned30 = true; sfx.warn(); say('My brain is getting fuzzy!'); }
@@ -631,9 +676,301 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
+/* ---------------- presence: notice motion with the front camera ---------------- */
+// Nothing is recorded or uploaded: tiny 64x48 frames are compared to the one before and thrown away.
+const NAME = (qs.get('name') || '').trim();
+const AWAY_MS = (parseFloat(qs.get('away')) || 45) * 1000;
+const MOTION_T = parseFloat(qs.get('motion')) || 0.02;
+let asleep = false, camOk = false, camVideo = null, camCtx = null, prevFrame = null, motionLevel = 0;
+let lastActivity = performance.now();
+const hi = () => NAME ? `Hi ${NAME}!` : 'Hi there!';
+
+async function initCamera() {
+  if (qs.get('camera') === 'off' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
+  try {
+    const s = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'user', width: { ideal: 160 }, height: { ideal: 120 }, frameRate: { ideal: 10 } }
+    });
+    camVideo = document.createElement('video');
+    camVideo.muted = true; camVideo.playsInline = true; camVideo.setAttribute('playsinline', '');
+    camVideo.srcObject = s;
+    await camVideo.play();
+    const c = document.createElement('canvas'); c.width = 64; c.height = 48;
+    camCtx = c.getContext('2d', { willReadFrequently: true });
+    camOk = true;
+    lastActivity = performance.now();
+    setInterval(checkMotion, 250);
+  } catch (e) { camOk = false; }
+}
+
+function checkMotion() {
+  if (document.hidden || !camVideo || camVideo.readyState < 2) return;
+  camCtx.drawImage(camVideo, 0, 0, 64, 48);
+  const d = camCtx.getImageData(0, 0, 64, 48).data;
+  const n = 64 * 48, g = new Float32Array(n);
+  let mean = 0;
+  for (let i = 0; i < n; i++) { g[i] = d[i * 4] * 0.3 + d[i * 4 + 1] * 0.59 + d[i * 4 + 2] * 0.11; mean += g[i]; }
+  mean /= n;
+  if (prevFrame) {
+    const shift = mean - prevFrame.mean;   // ignore the whole picture getting brighter/darker
+    let changed = 0;
+    for (let i = 0; i < n; i++) if (Math.abs(g[i] - prevFrame.g[i] - shift) > 22) changed++;
+    motionLevel = changed / n;
+    if (motionLevel > MOTION_T) noteActivity();
+  }
+  prevFrame = { g, mean };
+}
+
+function noteActivity() {
+  lastActivity = performance.now();
+  if (asleep) wakeFromSleep();
+}
+
+function goToSleep() {
+  if (asleep) return;
+  asleep = true;
+  document.body.classList.add('asleep');
+  try { speechSynthesis.cancel(); } catch (e) {}
+  speaking = false; bubbleMsg = '';
+  [500, 400, 300].forEach((f, i) => tone(f, .25, { delay: i * .22, type: 'triangle', vol: .08 }));
+  updateBubble();
+}
+
+function wakeFromSleep() {
+  asleep = false;
+  document.body.classList.remove('asleep');
+  lastActivity = performance.now();
+  happyUntil = secs() + 2;
+  sfx.boot();
+  setTimeout(() => {
+    if (broken) say(`${hi()} My brain broke! Can you fix it?`);
+    else say(`${hi()} You're back! Want to play?`);
+  }, 600);
+  updateBubble();
+}
+
+/* ---------------- "Robo, ..." questions (browser speech recognition) ---------------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, srStatus = SR ? 'off' : 'not supported', heardLog = '';
+let lastFinal = null, interimWake = false, recStartAt = 0;
+let pending = null;            // recorded audio waiting to find out what was said
+let followUpUntil = 0;         // after "Robo?" the next sentence is a question too
+let starvedSec = 0, micStarved = false;
+
+function initSpeech() {
+  if (!SR || qs.get('talk') === 'off') return;
+  try { rec = new SR(); } catch (e) { srStatus = 'not supported'; return; }
+  rec.lang = 'en-US'; rec.continuous = true; rec.interimResults = true;
+  rec.onstart = () => { srStatus = 'listening'; };
+  rec.onresult = e => {
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const txt = e.results[i][0].transcript.trim();
+      if (!txt) continue;
+      if (e.results[i].isFinal) gotFinal(txt);
+      else if (hasWake(txt)) interimWake = true;
+    }
+  };
+  rec.onerror = e => {
+    srStatus = 'error: ' + e.error;
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { rec = null; updateBubble(); }
+  };
+  rec.onend = () => { if (rec && awake) setTimeout(() => { try { rec.start(); } catch (err) {} }, 250); };
+  try { rec.start(); } catch (e) { srStatus = 'error'; }
+}
+
+// "Robo" has to start the sentence (a little "hey" or "um" first is fine)
+const WAKE = /^(?:(?:hey|okay|ok|hi|hello|yo|um|uh|oh)[\s,]+)?(?:robo ?ashe?r|robot|robo|robbo|roboto|rowboat|row bo|roe bo|ro bo)\b/i;
+function hasWake(t) { return WAKE.test(t.trim()); }
+function stripWake(t) { return t.trim().replace(WAKE, '').replace(/^[\s,.!?]+/, '').trim(); }
+
+function gotFinal(txt) {
+  heardLog = txt;
+  if (!awake || repairing || speaking || playing) return;      // don't answer our own voice
+  if (asleep) { noteActivity(); return; }
+  noteActivity();
+  const isQuestion = hasWake(txt) || secs() < followUpUntil;
+  if (pending) {
+    const p = pending; pending = null; clearTimeout(p.timer);
+    if (isQuestion) answer(txt);
+    else if (micStarved) mimicText(txt);
+    else playVoice(p.buf);
+    return;
+  }
+  if (isQuestion) { answer(txt); return; }        // also cancels any recording in progress
+  if (micStarved) { mimicText(txt); return; }
+  lastFinal = { txt, at: secs() };                // the recording of this is probably still finishing
+}
+
+// called when the copy-recorder has a finished sentence
+function heardAudio(buf) {
+  if (!rec) { playVoice(buf); return; }
+  if (lastFinal && lastFinal.at >= recStartAt - 0.3) { lastFinal = null; playVoice(buf); return; }
+  const wait = interimWake ? 3000 : 1300;          // give the recognizer a moment to tell us what it was
+  pending = {
+    buf,
+    timer: setTimeout(() => {
+      if (!pending) return;
+      const b = pending.buf; pending = null;
+      if (interimWake) { interimWake = false; setState('idle'); return; }
+      playVoice(b);
+    }, wait)
+  };
+}
+
+// if the recognizer hogs the microphone (some Android tablets), copy with the robot's own voice instead
+function mimicText(txt) { say(txt, null, 2); }
+
+function answer(txt) {
+  interimWake = false; followUpUntil = 0; lastFinal = null;
+  if (pending) { clearTimeout(pending.timer); pending = null; }
+  recording = false; chunks = [];
+  const q = stripWake(txt).toLowerCase().replace(/[^a-z0-9+\-*/ .']/g, ' ').replace(/\s+/g, ' ').trim();
+  const r = broken ? brokenReply() : reply(q);
+  setState('idle');
+  tone(1200, .06, { type: 'triangle', vol: .08 });
+  tone(1600, .06, { type: 'triangle', vol: .08, delay: .08 });
+  setTimeout(() => {
+    if (r.act) r.act();
+    const done = () => {
+      if (r.after) r.after();
+      if (r.followUp) followUpUntil = secs() + 7;
+    };
+    if (r.text) say(r.text, done); else done();
+  }, 250);
+}
+
+/* ---------------- what RoboAshr knows (no AI, just a script) ---------------- */
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const JOKES = [
+  'Why did the robot go on vacation? To recharge its batteries!',
+  "What is a robot's favorite snack? Computer chips!",
+  'Why was the robot so tired? It had a hard drive!',
+  'What do you call a sleeping dinosaur? A dino-snore!',
+  "Why can't a bicycle stand up by itself? Because it's two tired!",
+  'What do you call a bear with no teeth? A gummy bear!',
+  'Why are fish so smart? Because they live in schools!',
+  'What has ears but cannot hear? A cornfield!',
+  'Why did the cookie go to the doctor? Because it felt crummy!',
+  'What do you call a frozen dog? A pupsicle!',
+  "Why did the robot cross the road? Because the chicken programmed it to!",
+  'What did one plate say to the other plate? Dinner is on me!'
+];
+const FACTS = [
+  'An octopus has three hearts!',
+  'Honey never goes bad. People found honey in ancient tombs that was still good to eat!',
+  'A day on Venus is longer than a whole year on Venus!',
+  'Sharks were around before trees!',
+  'A group of flamingos is called a flamboyance!',
+  'Your heart beats about one hundred thousand times every day!',
+  'Bananas are berries, but strawberries are not!',
+  'Butterflies taste things with their feet!',
+  'Sloths can hold their breath longer than dolphins!',
+  'A blue whale\'s heart is about as big as a small car!',
+  'Cows have best friends!',
+  'Some turtles can breathe through their bottoms!'
+];
+const SOUNDS = {
+  cow: 'Moo!', dog: 'Woof woof!', cat: 'Meow!', duck: 'Quack quack!', pig: 'Oink oink!', sheep: 'Baaa!',
+  horse: 'Neigh!', lion: 'Roar!', frog: 'Ribbit!', owl: 'Hoo hoo!', chicken: 'Bawk bawk!', snake: 'Hissss!',
+  monkey: 'Ooh ooh ah ah!', bee: 'Bzzzz!', mouse: 'Squeak!', robot: 'Beep boop!', fox: 'Yip yip!',
+  goat: 'Maaa!', elephant: 'Pawoooo!', wolf: 'Owoooo!', turkey: 'Gobble gobble!', dinosaur: 'Rawr!'
+};
+const NUMS = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18,
+  nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90, hundred: 100
+};
+const num = w => /^-?\d+(\.\d+)?$/.test(w) ? parseFloat(w) : NUMS[w];
+
+function reply(q) {
+  const has = (...w) => w.some(x => q.includes(x));
+  const word = re => re.test(q);
+  if (!q) return { text: pick(["Yes? Ask me anything!", "Beep boop! I'm listening!", 'What do you want to know?']), followUp: true };
+
+  const m = q.match(/(-?\d+(?:\.\d+)?|[a-z]+) ?(plus|\+|minus|-|times|x|\*|multiplied by|divided by|\/|over) ?(-?\d+(?:\.\d+)?|[a-z]+)/);
+  if (m) {
+    const a = num(m[1]), b = num(m[3]);
+    if (a !== undefined && b !== undefined) {
+      const op = m[2];
+      let r, word;
+      if (op === 'plus' || op === '+') { r = a + b; word = 'plus'; }
+      else if (op === 'minus' || op === '-') { r = a - b; word = 'minus'; }
+      else if (op === 'divided by' || op === '/' || op === 'over') {
+        if (b === 0) return { text: "Dividing by zero makes my brain go bonkers! Don't do that!" };
+        r = a / b; word = 'divided by';
+      } else { r = a * b; word = 'times'; }
+      return { text: `${a} ${word} ${b} is ${Math.round(r * 100) / 100}!` };
+    }
+  }
+  if (has('joke')) return { text: pick(JOKES), act: () => setTimeout(sfx.giggle, 2500) };
+  if (has('fact', 'tell me something')) return { text: pick(FACTS) };
+  const sp = q.match(/(?:what does|what do|what sound does|how does) (?:a |an |the )?([a-z]+)/);
+  if (sp && SOUNDS[sp[1].replace(/s$/, '')]) return { text: SOUNDS[sp[1].replace(/s$/, '')] };
+  const say2 = q.match(/^(?:say|repeat after me) (.+)/);
+  if (say2) return { text: say2[1] };
+  const sp2 = q.match(/spell (?:the word )?([a-z]+)/);
+  if (sp2) return { text: sp2[1].toUpperCase().split('').join(', ') + '. ' + sp2[1] + '!' };
+  const ct = q.match(/count to ([a-z0-9]+)/);
+  if (ct && num(ct[1])) {
+    const n = Math.min(20, Math.max(1, Math.floor(num(ct[1]))));
+    return { text: Array.from({ length: n }, (_, i) => i + 1).join(', ') + '! Beep!' };
+  }
+  if (has('what time', 'the time')) return { text: `It's ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}!` };
+  if (has('what day', 'today', 'the date', "what's the date")) return { text: `Today is ${new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}!` };
+  if (has('your name', 'who are you')) return { text: "I'm RoboAshr! A robot with a brain in a jar!" };
+  if (has('how old')) return { text: "I'm a brand new robot! I was built in 2026." };
+  if (has('how are you', "how's it going", 'how do you feel')) {
+    const p = brainMs / BRAIN_MS;
+    return { text: p > 0.5 ? "I feel great! My brain is full of power!" : p > 0.2 ? "I'm okay, but my brain is getting a little fuzzy." : "Uh oh, my brain is almost out of power!" };
+  }
+  if (has('brain')) return { text: `My brain has ${Math.round(brainMs / BRAIN_MS * 100)} percent power left!` };
+  if (has('dance')) return { text: "Let's dance! Beep boop beep!", act: robotDance };
+  if (word(/\bsing\b|\bsong/)) return { act: robotSing };
+  if (has('flip a coin', 'coin')) return { text: `Flipping... it's ${pick(['heads', 'tails'])}!` };
+  if (has('dice', 'a die')) return { text: `Rolling... you got a ${randi(1, 6)}!` };
+  if (has('pick a number', 'random number')) return { text: `How about ${randi(1, 10)}?` };
+  if (has('love you')) return { text: `I love you too${NAME ? ', ' + NAME : ''}! Beep boop!`, act: () => { happyUntil = secs() + 3; } };
+  if (has('best friend')) return { text: NAME ? `You are, ${NAME}!` : 'You are!', act: () => { happyUntil = secs() + 3; } };
+  if (has('favorite color')) return { text: 'Blue! Like my spotlight!' };
+  if (has('favorite food', 'what do you eat', 'hungry')) return { text: 'I eat electricity! It tastes like tingly lemonade.' };
+  if (has('weather', 'raining', 'sunny')) return { text: "I can't see outside! Can you look out the window and tell me?" };
+  if (has('are you real', 'are you a robot', 'are you alive')) return { text: "I'm a real robot! Well, a robot who lives in a tablet." };
+  if (has('go to sleep', 'goodnight', 'good night') || word(/\bnap\b/)) return { text: 'Okay, goodnight! Zzz.', after: goToSleep };
+  if (has('laugh', 'tickle')) return { text: 'Ha ha ha! Beep beep! That tickles!', act: sfx.giggle };
+  if (has('scare me', 'scary') || word(/\bboo\b/)) return { text: 'BOO! Ha ha! Did I scare you?' };
+  if (has('sneeze')) return { text: 'Ah... ah... ah-CHOO! Oops, I sneezed out a bolt.' };
+  if (has('burp')) return { text: 'Bzzzzrrrrp! Excuse me!', act: () => tone(90, .6, { type: 'sawtooth', vol: .12, slide: 60 }) };
+  if (has('fart', 'toot')) return { text: 'Pfffrrrt! Oops, that was my exhaust fan!', act: () => noise(.5, { vol: .2, hp: 80 }) };
+  if (has('copy me', 'copy what', 'repeat me')) return { text: "Okay! Just talk, and I'll copy you!" };
+  if (has('what can you do', 'help')) return { text: 'Ask me for a joke, a fact, the time, some math, an animal sound, or tell me to dance or sing!' };
+  if (has('thank')) return { text: "You're welcome! Beep boop!" };
+  if (word(/\b(good)?bye\b/) || has('see you')) return { text: 'Bye bye! Come back soon!' };
+  if (/^(hi|hello|hey|howdy|yo)\b/.test(q)) return { text: `${hi()} Beep boop!`, act: () => { happyUntil = secs() + 2; } };
+  return { text: pick(["Beep boop! I don't know that one yet. Ask me for a joke!", "Hmm, that doesn't compute! Try asking me for a fact!", "My brain doesn't know that one. Want to hear a joke?"]) };
+}
+
+function brokenReply() {
+  return { text: pick(['Error! Error! My brain is broken! Please fix me!', 'Bzzt... does not compute... fix my brain!']) };
+}
+
+function robotDance() {
+  document.body.classList.add('dance');
+  [523, 659, 784, 659, 523, 659, 784, 1047, 784, 659, 523, 392].forEach((f, i) => tone(f, .14, { delay: i * .25, vol: .07 }));
+  setTimeout(() => document.body.classList.remove('dance'), 3200);
+}
+function robotSing() {
+  const song = [523, 523, 784, 784, 880, 880, 784, 0, 698, 698, 659, 659, 587, 587, 523];
+  song.forEach((f, i) => { if (f) tone(f, .28, { delay: i * .32, type: 'triangle', vol: .12 }); });
+  talkUntil = secs() + song.length * .32;
+  showMsg('🎵 Beep beep boop, la la la! 🎵', song.length * .32 + 1);
+  happyUntil = talkUntil;
+}
+
 /* ---------------- tapping the robot ---------------- */
 $('robot').addEventListener('pointerdown', () => {
   if (!awake || repairing) return;
+  if (asleep) { noteActivity(); return; }
+  noteActivity();
   if (broken) { openRepair(); return; }
   if (state === 'talking') return;
   happyUntil = secs() + 1.4;
@@ -914,6 +1251,9 @@ $('startBtn').addEventListener('click', async () => {
   try { initAudio(); ac.resume(); } catch (e) { $('startErr').textContent = 'Sound is not supported on this browser.'; $('startBtn').disabled = false; return; }
   keepAwake();
   await initMic();
+  initSpeech();
+  initCamera();
+  lastActivity = performance.now();
   awake = true;
   $('start').classList.add('hidden');
   sfx.boot();
@@ -939,7 +1279,20 @@ if (qs.has('debug')) {
   [['Break brain', () => robot.breakNow()], ['Test voice', () => robot.testVoice()], ['Fix', () => robot.fix()]].forEach(([l, f]) => {
     const b = document.createElement('button'); b.textContent = l; b.onclick = f; dbg.appendChild(b);
   });
+  const ask = document.createElement('input');
+  ask.placeholder = 'Type: robo tell me a joke';
+  ask.onkeydown = e => { if (e.key === 'Enter' && ask.value.trim()) { gotFinal(ask.value.trim()); ask.value = ''; } };
+  dbg.prepend(ask);
+  [['Sleep', () => goToSleep()], ['Wake', () => noteActivity()]].forEach(([l, f]) => {
+    const b = document.createElement('button'); b.textContent = l; b.onclick = f; dbg.appendChild(b);
+  });
   document.body.appendChild(dbg);
+  const st = document.createElement('div'); st.id = 'status';
+  document.body.appendChild(st);
+  setInterval(() => {
+    st.textContent = `mic ${micOk ? '✓' : '✗'}${micStarved ? ' (taken by speech)' : ''} · camera ${camOk ? '✓' : '✗'} motion ${(motionLevel * 100).toFixed(1)}% · ` +
+      `speech: ${srStatus} · voice ${'speechSynthesis' in window ? '✓' : '✗'} · heard: "${heardLog}"`;
+  }, 300);
 }
 updateBubble();
 </script>

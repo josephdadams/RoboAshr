@@ -27,5 +27,6 @@ Add these to the end of the page address, joined with `&`, for example `?name=As
 - `sens=1.5`: makes it pick up a quiet voice more easily
 - `camera=off`: never uses the camera, never sleeps
 - `talk=off`: copy only, no questions
+- `grammar=off`: let Vosk hear any English words, not just RoboAshr's commands (much less accurate)
 - `speech=browser`: use the browser's own speech recognition instead of Vosk (Chrome only; it sends audio to Google)
 - `debug`: shows test buttons, a box for typing questions, and a status line showing whether the mic, camera and speech recognition work

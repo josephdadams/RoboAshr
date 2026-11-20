@@ -800,10 +800,15 @@ async function initVosk() {
       if (!url.startsWith('blob:')) throw e;
       model = await Vosk.createModel(new URL(MODEL_PATH, location.href).href, -1);
     }
-    voskRec = new model.KaldiRecognizer(ac.sampleRate);
+    // Only listen for RoboAshr's own words. Anything else comes back as [unk] and simply gets copied.
+    voskRec = qs.get('grammar') === 'off'
+      ? new model.KaldiRecognizer(ac.sampleRate)
+      : new model.KaldiRecognizer(ac.sampleRate, JSON.stringify(buildGrammar()));
     voskRec.on('result', m => {
-      const t = ((m.result && m.result.text) || '').trim();
-      if (t) gotFinal(t);
+      const raw = ((m.result && m.result.text) || '').trim();
+      if (!raw) return;
+      const t = raw.replace(/\[unk\]/g, ' ').replace(/\s+/g, ' ').trim();
+      gotFinal(t || '(something else)');
     });
     voskRec.on('partialresult', m => {
       const p = (m.result && m.result.partial) || '';
@@ -944,7 +949,47 @@ const NUMS = {
 };
 const num = w => /^-?\d+(\.\d+)?$/.test(w) ? parseFloat(w) : NUMS[w];
 
+// every phrase RoboAshr understands, with and without "robo" in front
+function buildGrammar() {
+  const numWords = Object.keys(NUMS);
+  const animals = Object.keys(SOUNDS);
+  const asks = [
+    'tell me a joke', 'tell me another joke', 'tell me a fact', 'tell me another fact', 'tell me something',
+    'what time is it', 'what day is it', 'what is the date', 'what is today', 'what is your name', 'who are you',
+    'how old are you', 'how are you', 'how do you feel', 'how is your brain',
+    'dance', 'do a dance', 'can you dance', 'sing', 'sing a song', 'sing me a song',
+    'flip a coin', 'roll a dice', 'roll the dice', 'pick a number', 'pick a random number',
+    'i love you', 'who is your best friend', 'what is your favorite color', 'what is your favorite food',
+    'are you hungry', 'what do you eat', 'what is the weather', 'is it raining', 'is it sunny',
+    'are you a robot', 'are you real', 'are you alive', 'go to sleep', 'good night', 'goodnight', 'take a nap',
+    'laugh', 'can i tickle you', 'scare me', 'boo', 'sneeze', 'burp', 'fart', 'toot',
+    'copy me', 'what can you do', 'help', 'thank you', 'thanks', 'bye', 'goodbye', 'bye bye', 'see you later',
+    'hi', 'hello', 'hey', 'what is', 'what\'s', 'plus', 'minus', 'times', 'divided by', 'count to', 'and'
+  ];
+  animals.forEach(a => asks.push(`what does a ${a} say`, `what sound does a ${a} make`));
+  const all = new Set(['robo', 'hey robo', '[unk]', ...numWords]);
+  asks.forEach(p => { all.add(p); all.add('robo ' + p); });
+  return [...all];
+}
+
+// "twenty five plus three" -> "25 plus 3"
+function digitsFromWords(q) {
+  const out = [];
+  let cur = null;
+  for (const w of q.split(' ')) {
+    const n = NUMS[w];
+    if (n === undefined) { if (cur !== null) { out.push(String(cur)); cur = null; } out.push(w); continue; }
+    if (n === 100) cur = (cur || 1) * 100;
+    else if (cur !== null && cur % 10 === 0 && cur % 100 !== 0 && n < 10) cur += n;
+    else if (cur !== null && cur >= 100 && cur % 100 === 0 && n < 100) cur += n;
+    else { if (cur !== null) out.push(String(cur)); cur = n; }
+  }
+  if (cur !== null) out.push(String(cur));
+  return out.join(' ');
+}
+
 function reply(q) {
+  q = digitsFromWords(q);
   const has = (...w) => w.some(x => q.includes(x));
   const word = re => re.test(q);
   if (!q) return { text: pick(["Yes? Ask me anything!", "Beep boop! I'm listening!", 'What do you want to know?']), followUp: true };

@@ -11,6 +11,7 @@ Everything runs in the browser, and nothing is sent to a server:
 
 - **`index.html`:** the whole app.
 - **Speech recognition:** done on the device by [vosk-browser](https://github.com/ccoreilly/vosk-browser) (Apache-2.0, `vendor/vosk.js`) with the small English Vosk model (`models/`, 41 MB). It works in the Fire tablet's Silk browser, which has no built-in speech recognition. The model downloads once and is then kept in the browser's cache storage.
+- **Robot voice:** answers are spoken by [meSpeak](https://www.masswerk.at/mespeak/) (eSpeak compiled to JavaScript, GNU GPL, `vendor/mespeak.js`). Both voices then go through the same robot effect: a ring modulator, a bit-crusher, a metallic echo and a tinny speaker tone.
 - **Camera:** frames are compared on the tablet and never saved or uploaded.
 
 The microphone and camera only work on an `https://` page, which GitHub Pages provides.
@@ -29,4 +30,5 @@ Add these to the end of the page address, joined with `&`, for example `?name=As
 - `talk=off`: copy only, no questions
 - `grammar=off`: let Vosk hear any English words, not just RoboAshr's commands (much less accurate)
 - `speech=browser`: use the browser's own speech recognition instead of Vosk (Chrome only; it sends audio to Google)
+- `voice=tablet`: speak answers with the tablet's own voice instead of the robot voice
 - `debug`: shows test buttons, a box for typing questions, and a status line showing whether the mic, camera and speech recognition work

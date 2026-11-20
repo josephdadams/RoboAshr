@@ -445,7 +445,44 @@ function finishRecording(cs) {
   heardAudio(buf);
 }
 
-/* ---------------- robot voice playback ---------------- */
+/* ---------------- robot voice effect ---------------- */
+// Used for both voices: ring modulator (the classic sci-fi robot sound), a bit-crusher for
+// digital grit, a short metallic echo, then a tinny "robot speaker" tone.
+let crushCurve = null;
+function robotize(src, broken) {
+  const input = ac.createGain();
+  src.connect(input);
+  const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 160;
+  input.connect(hp);
+  const ring = ac.createGain(); ring.gain.value = 0;               // gain swings -1..1 with the oscillator
+  const osc = ac.createOscillator(); osc.frequency.value = broken ? 22 : 48;
+  osc.connect(ring.gain);
+  hp.connect(ring);
+  const dry = ac.createGain(); dry.gain.value = 0.15;
+  hp.connect(dry);
+  if (!crushCurve) {
+    const n = 2048, steps = 10;
+    crushCurve = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1; crushCurve[i] = Math.round(x * steps) / steps; }
+  }
+  const crush = ac.createWaveShaper(); crush.curve = crushCurve;
+  const mix = ac.createGain();
+  ring.connect(crush); crush.connect(mix); dry.connect(mix);
+  const dl = ac.createDelay(0.05); dl.delayTime.value = broken ? 0.013 : 0.006;
+  const fb = ac.createGain(); fb.gain.value = 0.55;
+  const wet = ac.createGain(); wet.gain.value = 0.7;
+  mix.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet);
+  const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 5000;
+  const peak = ac.createBiquadFilter(); peak.type = 'peaking'; peak.frequency.value = 1800; peak.Q.value = 1.2; peak.gain.value = 6;
+  mix.connect(lp); wet.connect(lp); lp.connect(peak); peak.connect(voiceBus);
+  osc.start();
+  return () => {
+    try { osc.stop(); } catch (e) {}
+    setTimeout(() => { input.disconnect(); peak.disconnect(); fb.disconnect(); }, 400);
+  };
+}
+
+/* ---------------- copying: play the recording back as a robot ---------------- */
 function playVoice(buf) {
   playing = true;
   flushSpeech();
@@ -463,31 +500,13 @@ function playVoice(buf) {
   }
   if (broken) ch.reverse();   // broken brain talks backwards!
 
-  const t = ac.currentTime + 0.05;
   const src = ac.createBufferSource();
   src.buffer = buf;
   src.playbackRate.value = broken ? 0.72 : PITCH;
-
-  // ring modulator = classic robot voice
-  const dry = ac.createGain(); dry.gain.value = 0.5;
-  const ring = ac.createGain(); ring.gain.value = 0;
-  const osc = ac.createOscillator(); osc.frequency.value = broken ? 22 : 60;
-  const depth = ac.createGain(); depth.gain.value = 0.9;
-  osc.connect(depth); depth.connect(ring.gain);
-  src.connect(dry); src.connect(ring);
-  const mix = ac.createGain();
-  dry.connect(mix); ring.connect(mix);
-  // short metallic comb
-  const dl = ac.createDelay(0.1); dl.delayTime.value = 0.009;
-  const fb = ac.createGain(); fb.gain.value = 0.4;
-  const wet = ac.createGain(); wet.gain.value = 0.5;
-  mix.connect(dl); dl.connect(fb); fb.connect(dl); dl.connect(wet);
-  mix.connect(voiceBus); wet.connect(voiceBus);
-
-  osc.start(t); src.start(t);
+  const stop = robotize(src, broken);
+  src.start(ac.currentTime + 0.05);
   src.onended = () => {
-    try { osc.stop(); } catch (e) {}
-    setTimeout(() => { mix.disconnect(); wet.disconnect(); fb.disconnect(); }, 400);
+    stop();
     playing = false;
     hush(0.1);
     setState('idle');
@@ -543,17 +562,51 @@ const sfx = {
   }
 };
 
-/* the robot talks with the tablet's built-in voice, and the words show in the bubble */
+/* The robot speaks with eSpeak (an old-school synthesizer, built into the page by meSpeak) run
+   through the robot effect, so answers sound like the copying voice. Until it has loaded, or with
+   ?voice=tablet, it falls back to the tablet's own voice. The words always show in the bubble. */
+let meSpeakLoad = null, voiceOut = false, voiceSrc = null;
+function loadMeSpeak() {
+  if (qs.get('voice') === 'tablet') return Promise.resolve();
+  if (!meSpeakLoad) meSpeakLoad = loadScript('vendor/mespeak.js').catch(e => { meSpeakLoad = null; });
+  return meSpeakLoad;
+}
+function stopTalking() {
+  try { speechSynthesis.cancel(); } catch (e) {}
+  if (voiceSrc) { try { voiceSrc.onended && voiceSrc.onended(); voiceSrc.stop(); } catch (e) {} voiceSrc = null; }
+  voiceOut = false;
+}
 function say(text, done, pitch) {
   let finished = false;
   const finish = () => {
     if (finished) return;
-    finished = true; speaking = false; hush(0.3);
+    finished = true; speaking = false; voiceOut = false; voiceSrc = null; hush(0.3);
     if (done) done();
   };
   showMsg('🤖 ' + text, Math.max(3, text.length * 0.07 + 2));
   speaking = true;
   flushSpeech();
+  const spoken = text.replace(/[^\x20-\x7E]/g, ' ');
+  if (window.meSpeak && ac && qs.get('voice') !== 'tablet') {
+    try {
+      const wav = meSpeak.speak(spoken, { rawdata: 'arraybuffer', pitch: pitch ? 80 : 58, speed: 150, amplitude: 140 });
+      if (wav) {
+        ac.decodeAudioData(wav).then(buf => {
+          if (finished) return;
+          const src = ac.createBufferSource(); src.buffer = buf;
+          const stop = robotize(src, broken);
+          voiceSrc = src; voiceOut = true;
+          src.onended = () => { stop(); finish(); };
+          src.start();
+          setTimeout(finish, buf.duration * 1000 + 2000);
+        }).catch(() => tabletVoice(spoken, pitch, finish));
+        return;
+      }
+    } catch (e) {}
+  }
+  tabletVoice(spoken, pitch, finish);
+}
+function tabletVoice(text, pitch, finish) {
   try {
     if (!('speechSynthesis' in window)) throw new Error('no voice');
     speechSynthesis.cancel();
@@ -613,7 +666,7 @@ function animateFace(t, dt) {
   // jaw chomps with the robot voice
   let target = 0.03;
   if (asleep) target = 0;
-  else if (state === 'talking' && outAnalyser) {
+  else if ((state === 'talking' || voiceOut) && outAnalyser) {
     outAnalyser.getByteFrequencyData(freqData);
     let s = 0;
     for (let i = 1; i < 14; i++) s += freqData[i];
@@ -735,7 +788,7 @@ function goToSleep() {
   if (asleep) return;
   asleep = true;
   document.body.classList.add('asleep');
-  try { speechSynthesis.cancel(); } catch (e) {}
+  stopTalking();
   speaking = false; bubbleMsg = '';
   [500, 400, 300].forEach((f, i) => tone(f, .25, { delay: i * .22, type: 'triangle', vol: .08 }));
   updateBubble();
@@ -1099,7 +1152,7 @@ function mix(a, b, t) { const A = hex2rgb(a), B = hex2rgb(b); return `rgb(${A.ma
 
 function openRepair() {
   repairing = true;
-  try { speechSynthesis.cancel(); } catch (e) {}
+  stopTalking();
   speaking = false;
   $('repair').classList.remove('hidden');
   buildRepair();
@@ -1359,6 +1412,7 @@ $('startBtn').addEventListener('click', async () => {
   keepAwake();
   await initMic();
   initSpeech();
+  loadMeSpeak();
   initCamera();
   lastActivity = performance.now();
   awake = true;

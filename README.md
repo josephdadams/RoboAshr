@@ -7,7 +7,11 @@ A talking robot for Asher's tablet.
 - **Knows when you're there:** it uses the front camera to notice movement. When nobody's around it falls asleep and its brain timer pauses. Move or talk and it wakes up and says hi.
 - **Breaks its brain every 4 minutes:** fix it by putting out sparks, tightening bolts and plugging in wires.
 
-Everything is in one file, `index.html`, and it all runs in the browser. Camera frames are compared on the tablet and never saved or uploaded. Answering questions uses the browser's built-in speech recognition, where available; Chrome sends that audio to Google to turn it into text. If the browser has no speech recognition, RoboAshr still copies and still notices you.
+Everything runs in the browser, and nothing is sent to a server:
+
+- **`index.html`:** the whole app.
+- **Speech recognition:** done on the device by [vosk-browser](https://github.com/ccoreilly/vosk-browser) (Apache-2.0, `vendor/vosk.js`) with the small English Vosk model (`models/`, 41 MB). It works in the Fire tablet's Silk browser, which has no built-in speech recognition. The model downloads once and is then kept in the browser's cache storage.
+- **Camera:** frames are compared on the tablet and never saved or uploaded.
 
 The microphone and camera only work on an `https://` page, which GitHub Pages provides.
 
@@ -23,4 +27,5 @@ Add these to the end of the page address, joined with `&`, for example `?name=As
 - `sens=1.5`: makes it pick up a quiet voice more easily
 - `camera=off`: never uses the camera, never sleeps
 - `talk=off`: copy only, no questions
+- `speech=browser`: use the browser's own speech recognition instead of Vosk (Chrome only; it sends audio to Google)
 - `debug`: shows test buttons, a box for typing questions, and a status line showing whether the mic, camera and speech recognition work

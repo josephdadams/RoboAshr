@@ -400,6 +400,9 @@ function onMic(e) {
   if (rms < 1e-6) starvedSec += cs; else starvedSec = 0;
   micStarved = !!rec && starvedSec > 4;
   const startT = Math.max(0.012, noiseFloor * 3) / SENS;
+  if (voskRec && awake && !asleep && !repairing && !playing && !speaking) {
+    voskRec.acceptWaveformFloat(new Float32Array(d), ac.sampleRate);
+  }
 
   if (!canListen()) {
     if (asleep && awake && !speaking && rms > startT * 2) noteActivity();   // talking wakes it up
@@ -445,6 +448,7 @@ function finishRecording(cs) {
 /* ---------------- robot voice playback ---------------- */
 function playVoice(buf) {
   playing = true;
+  flushSpeech();
   setState('talking');
   const ch = buf.getChannelData(0);
   let pk = 0;
@@ -549,6 +553,7 @@ function say(text, done, pitch) {
   };
   showMsg('🤖 ' + text, Math.max(3, text.length * 0.07 + 2));
   speaking = true;
+  flushSpeech();
   try {
     if (!('speechSynthesis' in window)) throw new Error('no voice');
     speechSynthesis.cancel();
@@ -756,9 +761,65 @@ let lastFinal = null, interimWake = false, recStartAt = 0;
 let pending = null;            // recorded audio waiting to find out what was said
 let followUpUntil = 0;         // after "Robo?" the next sentence is a question too
 let starvedSec = 0, micStarved = false;
+let voskRec = null;            // on-device recognizer (works without Google, e.g. on Fire tablets)
+
+/* Vosk runs speech recognition inside the page. Its 41 MB English model is downloaded once
+   and kept in the browser's cache storage so the tablet doesn't fetch it every time. */
+const MODEL_PATH = 'models/vosk-model-small-en-us-0.15.tar.gz';
+function loadScript(src) {
+  return new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = res; s.onerror = () => rej(new Error('could not load ' + src));
+    document.head.appendChild(s);
+  });
+}
+async function cachedModelUrl() {
+  const url = new URL(MODEL_PATH, location.href).href;
+  if (!('caches' in window)) return url;
+  try {
+    const cache = await caches.open('roboashr-speech-v1');
+    let res = await cache.match(url);
+    if (!res) {
+      srStatus = 'downloading speech model (41 MB)…';
+      res = await fetch(url);
+      if (!res.ok) return url;
+      await cache.put(url, res.clone());
+    }
+    return URL.createObjectURL(await res.blob()) + '#vosk-model-small-en-us-0.15.tar.gz';
+  } catch (e) { return url; }
+}
+async function initVosk() {
+  srStatus = 'loading speech…';
+  try {
+    if (!window.Vosk) await loadScript('vendor/vosk.js');
+    const url = await cachedModelUrl();
+    srStatus = 'starting speech model…';
+    let model;
+    try { model = await Vosk.createModel(url, -1); }
+    catch (e) {
+      if (!url.startsWith('blob:')) throw e;
+      model = await Vosk.createModel(new URL(MODEL_PATH, location.href).href, -1);
+    }
+    voskRec = new model.KaldiRecognizer(ac.sampleRate);
+    voskRec.on('result', m => {
+      const t = ((m.result && m.result.text) || '').trim();
+      if (t) gotFinal(t);
+    });
+    voskRec.on('partialresult', m => {
+      const p = (m.result && m.result.partial) || '';
+      if (p && hasWake(p)) interimWake = true;
+    });
+    rec = { vosk: true };
+    srStatus = 'listening (on this device)';
+    updateBubble();
+  } catch (e) { srStatus = 'speech failed: ' + ((e && e.message) || e); }
+}
+function flushSpeech() { if (voskRec) voskRec.retrieveFinalResult(); }
 
 function initSpeech() {
-  if (!SR || qs.get('talk') === 'off') return;
+  if (qs.get('talk') === 'off') return;
+  if (qs.get('speech') !== 'browser') { initVosk(); return; }   // ?speech=browser uses Chrome's own recognizer
+  if (!SR) return;
   try { rec = new SR(); } catch (e) { srStatus = 'not supported'; return; }
   rec.lang = 'en-US'; rec.continuous = true; rec.interimResults = true;
   rec.onstart = () => { srStatus = 'listening'; };
@@ -805,7 +866,8 @@ function gotFinal(txt) {
 function heardAudio(buf) {
   if (!rec) { playVoice(buf); return; }
   if (lastFinal && lastFinal.at >= recStartAt - 0.3) { lastFinal = null; playVoice(buf); return; }
-  const wait = interimWake ? 3000 : 1300;          // give the recognizer a moment to tell us what it was
+  flushSpeech();                                   // Vosk: "what was that?" right now
+  const wait = interimWake ? 3000 : 1500;          // give the recognizer a moment to tell us what it was
   pending = {
     buf,
     timer: setTimeout(() => {

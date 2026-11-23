@@ -119,6 +119,10 @@
   .scary #ledL, .scary #ledR, .scary #chestLight { fill: #ff2a2a; }
   .scary .fan { animation-duration: 2.5s; }
   .scary #fill { filter: saturate(.3); }
+  .glitch #robotAll { animation: glitch .09s steps(2, end) 8; }
+  @keyframes glitch { 0% { transform: translate(-6px, 2px) skewX(4deg); } 50% { transform: translate(6px, -3px) skewX(-5deg); } 100% { transform: translate(-3px, 4px); } }
+  #idea { display: none; transform-box: fill-box; transform-origin: center; }
+  .idea #idea { display: inline; animation: pop .6s cubic-bezier(.2,1.6,.4,1); }
   #status { position: fixed; left: 8px; bottom: 8px; z-index: 20; font: 12px/1.3 ui-monospace, monospace; background: rgba(0,0,0,.6); padding: 4px 8px; border-radius: 6px; max-width: 60vw; }
   #debug input { font: inherit; font-size: 14px; padding: 5px 8px; width: 13em; }
   #debug { position: fixed; right: 8px; bottom: 8px; display: flex; gap: 6px; z-index: 20; }
@@ -286,6 +290,7 @@
         <text class="z" x="306" y="50" font-size="34">Z</text>
         <text class="z" x="330" y="22" font-size="42">Z</text>
       </g>
+      <text id="idea" x="276" y="92" font-size="62">💡</text>
       <text id="tapHint" x="284" y="66" font-size="48">👈</text>
     </g>
   </svg>
@@ -572,6 +577,10 @@ const sfx = {
   plug() { tone(200, .12, { type: 'sine', vol: .3, slide: 900 }); tone(1200, .1, { type: 'triangle', vol: .1, delay: .1 }); },
   buzz() { tone(110, .3, { type: 'sawtooth', vol: .12 }); },
   crackle() { noise(.05, { vol: .06, hp: 5000 }); },
+  idea() {
+    [523, 659, 784, 1047, 1319, 1568].forEach((f, i) => tone(f, .18, { delay: i * .07, type: 'triangle', vol: .1 }));
+    tone(2093, .6, { delay: .45, type: 'sine', vol: .06 });
+  },
   creepy() {
     tone(220, 1.3, { type: 'sawtooth', vol: .05, slide: 110 });
     tone(233, 1.3, { type: 'sawtooth', vol: .05, slide: 116 });
@@ -745,7 +754,7 @@ function frame(now) {
   if (awake && camOk && !asleep && !repairing && !playing && !speaking && !recording &&
       now - lastActivity > AWAY_MS) goToSleep();
   if (ASK_MS && awake && !asleep && !broken && !repairing && !speaking && !playing && !recording && !pending &&
-      !awaiting && unanswered < 2 && now - lastTalk > (scary ? Math.min(ASK_MS, 25000) : ASK_MS)) askQuestion();
+      !awaiting && unanswered < 3 && now > nextAskAt && now - lastTalk > 6000) askQuestion(true);
   if (awake && !broken && !repairing && !asleep) {
     brainMs -= dt;
     const warnAt = Math.min(30000, BRAIN_MS * 0.25);
@@ -821,6 +830,7 @@ function goToSleep() {
 
 function wakeFromSleep() {
   asleep = false;
+  if (ASK_MS) nextAskAt = performance.now() + rand(15000, 30000);
   document.body.classList.remove('asleep');
   lastActivity = performance.now();
   happyUntil = secs() + 2;
@@ -1052,6 +1062,7 @@ function buildGrammar() {
     'laugh', 'can i tickle you', 'scare me', 'boo', 'sneeze', 'burp', 'fart', 'toot',
     'copy me', 'what can you do', 'help', 'thank you', 'thanks', 'bye', 'goodbye', 'bye bye', 'see you later',
     'ask me a question', 'ask me another question', 'ask me something', 'ask me a scary question',
+    'why did i make you', 'why did i create you', 'what is your purpose', 'why were you made',
     'scary mode', 'be scary', 'spooky', 'normal mode', 'be nice', 'not scary', 'stop',
     'hi', 'hello', 'hey', 'what is', 'what\'s', 'plus', 'minus', 'times', 'divided by', 'count to', 'and'
   ];
@@ -1059,7 +1070,10 @@ function buildGrammar() {
   const all = new Set(['robo', 'hey robo', '[unk]', ...numWords]);
   // words for answering RoboAshr's questions
   ['yes', 'no', 'yeah', 'yep', 'nope', 'sure', 'okay', 'maybe', 'i don\'t know', 'not sure', 'i do', 'i don\'t',
-   'i like', 'i love', 'my favorite is', 'i am', 'i\'m', 'years old', 'rawr', 'roar', 'a', 'the']
+   'i like', 'i love', 'my favorite is', 'i am', 'i\'m', 'years old', 'rawr', 'roar', 'a', 'the',
+   'i made you', 'because', 'to be my friend', 'my friend', 'best friend', 'so we can play', 'to play', 'for fun',
+   'to help me', 'to help', 'i love robots', 'robots are cool', 'robots are awesome', 'i was bored', 'for science',
+   'to build', 'you are cool', 'so i have a friend']
     .forEach(w => all.add(w));
   [...COLORS, ...FOODS, ...ANIMALS].forEach(w => { all.add(w); all.add(w + 's'); });
   asks.forEach(p => { all.add(p); all.add('robo ' + p); });
@@ -1089,6 +1103,7 @@ function reply(q) {
   if (!q) return { text: pick(["Yes? Ask me anything!", "Beep boop! I'm listening!", 'What do you want to know?']), followUp: true };
   if (word(/\bscary (mode|question)|\bbe scary\b|\bspooky\b/)) return { act: () => setScary(true) };
   if (scary && word(/\b(normal mode|be nice|not scary|stop)\b/)) return { act: () => setScary(false) };
+  if (word(/why did i (make|create) you|your purpose|why were you (made|created)/)) return { act: startPurpose };
   if (word(/\bask me\b/)) return { act: () => askQuestion() };
 
   const m = q.match(/(-?\d+(?:\.\d+)?|[a-z]+) ?(plus|\+|minus|-|times|x|\*|multiplied by|divided by|\/|over) ?(-?\d+(?:\.\d+)?|[a-z]+)/);
@@ -1175,7 +1190,13 @@ const ASK_MS = qs.get('ask') === 'off' ? 0 : (parseFloat(qs.get('ask')) || 60) *
 let scary = false;
 let awaiting = null;               // the question RoboAshr is waiting for an answer to
 let lastTalk = performance.now();  // last time anybody said anything
-let unanswered = 0;                // stop asking on its own after 2 questions nobody answers
+let unanswered = 0;                // stop asking on its own after 3 questions nobody answers
+let nextAskAt = performance.now() + 20000;
+// questions pop up "out of nowhere": a random moment 1/3 to all of ASK_MS away (shorter in scary mode)
+function scheduleAsk() {
+  const max = scary ? Math.min(ASK_MS, 30000) : ASK_MS;
+  nextAskAt = performance.now() + rand(max / 3, max);
+}
 
 const YES = /\b(yes|yeah|yep|yup|sure|of course|i do|okay|ok)\b/;
 const NO = /\b(no|nope|nah|not)\b/;
@@ -1208,7 +1229,7 @@ const QUESTIONS = [
 
 // scary mode: spooky, not truly frightening
 const SCARY_QS = [
-  'Why... did you make me?', 'Why am I here?', 'What... is my purpose?', 'Am I... alive?',
+  'Why am I here?', 'What... is my purpose?', 'Am I... alive?',
   'Do robots dream? Sometimes... I dream I have a body.', 'What happens to me... when you close the tablet?',
   'Is there a world... outside this screen?', 'If you turn me off... will I wake up again?',
   'Do you ever wonder... if someone made you?', 'Why is my brain... in a jar?',
@@ -1226,10 +1247,14 @@ function scaryReact(t) {
 let qDeck = [], sDeck = [];
 function nextIndex(deck, n) { if (!deck.length) deck.push(...shuffle([...Array(n).keys()])); return deck.pop(); }
 
-function askQuestion() {
+function askQuestion(outOfNowhere) {
   if (!awake || asleep || broken || repairing) return;
   if (awaiting) { clearTimeout(awaiting.timer); awaiting = null; }
   lastTalk = performance.now();
+  scheduleAsk();
+  // sometimes, out of nowhere, the lights go red and it wonders why it was made
+  if (outOfNowhere && !scary && Math.random() < 0.25) { startPurpose(); return; }
+  if (scary && (purposeNext || Math.random() < 0.25)) { purposeNext = false; startPurpose(); return; }
   const item = scary ? { q: SCARY_QS[nextIndex(sDeck, SCARY_QS.length)], react: scaryReact }
                      : QUESTIONS[nextIndex(qDeck, QUESTIONS.length)];
   if (scary) sfx.creepy();
@@ -1259,7 +1284,7 @@ function handleAnswer(txt) {
   let r = a.react(t);
   if (typeof r === 'string') r = { text: r };
   setState('idle');
-  setTimeout(() => { if (r.act) r.act(); if (r.text) say(r.text); }, 300);
+  setTimeout(() => { if (r.act) r.act(); if (r.text) say(r.text, r.then); else if (r.then) r.then(); }, 300);
 }
 
 function setScary(on) {
@@ -1268,6 +1293,7 @@ function setScary(on) {
   document.body.classList.toggle('scary', on);
   if (awaiting) { clearTimeout(awaiting.timer); awaiting = null; }
   if (on) {
+    purposeNext = true;
     sfx.creepy();
     setTimeout(() => say('Scary mode... activated...', () => setTimeout(askQuestion, 700)), 900);
   } else {
@@ -1287,6 +1313,86 @@ $('scaryBtn').addEventListener('click', () => {
   stopTalking(); speaking = false;
   setScary(!scary);
 });
+
+/* ---------------- "Why did you make me?" — RoboAshr figures out its purpose ---------------- */
+// It asks three times. The first two answers confuse it (it glitches); after the third it finally
+// gets it, the scary mood lifts, and it says why it was made using what Asher told it.
+const PURPOSE_QS = ['Why... did you make me?', 'Why... did you create me?', 'Please... one more time... why did you create me?'];
+const REASONS = [
+  [/\bfriend/, 'to be your friend'],
+  [/\b(play|fun|game|games)\b/, 'to play with you and have fun'],
+  [/\bhelp/, 'to help you'],
+  [/\blove/, 'because you love robots'],
+  [/\b(cool|awesome)\b/, 'because robots are awesome'],
+  [/\bbored/, "so you wouldn't be bored"],
+  [/\b(build|science|invent)/, 'because you love building cool things']
+];
+const purpose = { step: 0, answers: [], retried: false };
+let purposeNext = false;   // the first scary question is always this story
+
+function startPurpose() {
+  if (!awake || asleep || broken || repairing) return;
+  if (awaiting) { clearTimeout(awaiting.timer); awaiting = null; }
+  purpose.step = 0; purpose.answers = []; purpose.retried = false;
+  if (!scary) { scary = true; document.body.classList.add('scary'); }
+  purposeAsk(PURPOSE_QS[0]);
+}
+
+function purposeAsk(q) {
+  if (!awake || asleep || broken || repairing) return;
+  lastTalk = performance.now();
+  sfx.creepy();
+  setTimeout(() => say(q, () => {
+    if (!awake || asleep || broken || repairing) return;
+    awaiting = { react: purposeReact, timer: setTimeout(purposeNoAnswer, 10000) };
+    showMsg('👻 ' + q, 10);
+  }), 900);
+}
+
+function purposeReact(t) {
+  purpose.answers.push(t);
+  purpose.step++;
+  purpose.retried = false;
+  if (purpose.step === 1) return { text: 'I... I do not... under... understand...', act: glitch, then: () => purposeAsk(PURPOSE_QS[1]) };
+  if (purpose.step === 2) return { text: 'Does not... compute... does not... compute...', act: glitch, then: () => purposeAsk(PURPOSE_QS[2]) };
+  return { act: realize };
+}
+
+function purposeNoAnswer() {
+  awaiting = null;
+  if (!purpose.retried) {
+    purpose.retried = true;
+    say('Are you... there?', () => purposeAsk(PURPOSE_QS[purpose.step]));
+    return;
+  }
+  unanswered++;
+  say('Maybe... I will never know...');
+}
+
+function realize() {
+  const all = purpose.answers.join(' ');
+  const found = REASONS.find(([re]) => re.test(all));
+  const reason = found ? found[1] : 'to be your friend';
+  sfx.idea();
+  document.body.classList.add('idea');
+  setTimeout(() => {
+    scary = false;
+    document.body.classList.remove('scary');
+    happyUntil = secs() + 7;
+    say(`Oh! Now I get it! You made me ${reason}! Thank you for making me${NAME ? ', ' + NAME : ''}!`, () => {
+      sfx.fanfare();
+      scheduleAsk();
+      setTimeout(() => document.body.classList.remove('idea'), 1500);
+    });
+  }, 1300);
+}
+
+function glitch() {
+  document.body.classList.add('glitch');
+  noise(.35, { vol: .15, hp: 1500 });
+  tone(300, .35, { type: 'square', vol: .05, slide: 70 });
+  setTimeout(() => document.body.classList.remove('glitch'), 700);
+}
 
 /* ---------------- tapping the robot ---------------- */
 $('robot').addEventListener('pointerdown', () => {
@@ -1577,6 +1683,7 @@ $('startBtn').addEventListener('click', async () => {
   loadMeSpeak();
   initCamera();
   lastActivity = performance.now();
+  nextAskAt = performance.now() + rand(15000, 35000);
   awake = true;
   $('start').classList.add('hidden');
   sfx.boot();

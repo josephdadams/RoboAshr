@@ -267,16 +267,17 @@
     const sc = 1 + S.lean * .35 - S.snarl * .03;
     at('dHead').setAttribute('transform',
       `translate(200,${(250 + down + bob).toFixed(1)}) rotate(${(S.tilt + Math.sin(t * .7) * 2).toFixed(1)}) scale(${sc.toFixed(3)}) translate(-200,-250)`);
-    const rx = (3 + S.round * 11).toFixed(1);
+    // cat eyes: thin slits when angry, big round pupils when happy or curious
+    const rx = Math.max(1.6, 3.5 + S.round * 14 + S.happy * 3 - S.snarl * 2).toFixed(1);
     at('dPupilL').setAttribute('rx', rx); at('dPupilR').setAttribute('rx', rx);
-    const lx = (S.lookX * 10).toFixed(1), ly = (S.lookY * 8).toFixed(1);
+    const lx = (S.lookX * 12).toFixed(1), ly = (S.lookY * 9).toFixed(1);
     at('dIrisL').setAttribute('transform', `translate(${lx},${ly})`);
-    at('dIrisR').setAttribute('transform', `translate(${(-S.lookX * 10).toFixed(1)},${ly})`);
+    at('dIrisR').setAttribute('transform', `translate(${(-S.lookX * 12).toFixed(1)},${ly})`);
     if (t > blinkAt) blinkAt = t + rand(2.5, 6);
     const blink = (blinkAt - t) > 0 && (blinkAt - t) < 0.14 ? 1 : 0;
-    const lid = asleep ? 80 : Math.min(80, Math.max(S.closed * 80, blink * 80) + S.snarl * 16);
+    const lid = asleep ? 84 : Math.min(84, Math.max(S.closed * 84, blink * 84) + S.snarl * 20);
     at('dLidL').setAttribute('height', lid.toFixed(1)); at('dLidR').setAttribute('height', lid.toFixed(1));
-    const low = (S.happy * 22).toFixed(1);
+    const low = (S.happy * 12).toFixed(1);
     for (const id of ['dLowL', 'dLowR']) { at(id).setAttribute('y', (40 - low).toFixed(1)); at(id).setAttribute('height', low); }
     const brow = `rotate(${(S.snarl * 20 - S.sad * 14).toFixed(1)} 0 -40) translate(0,${(S.snarl * 6).toFixed(1)})`;
     at('dBrowL').setAttribute('transform', brow); at('dBrowR').setAttribute('transform', brow);
